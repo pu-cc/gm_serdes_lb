@@ -491,11 +491,12 @@ class SerdesTool:
     pos_cond = ["DONE", "PRESENT", "LOCKED", "IS_ALIGNED", "EN_ADPLL_CTRL", "CONFIG_SEL", "SERDES_ENABLE"]
     neg_cond = ["ERR"]
 
-    def __init__(self, args, jtag):
-        self._jtag = jtag
-        self._board = args.board
-        if self._jtag is not None:
-            self.configure()
+    def __init__(self, args, jtag, hwinit):
+        if hwinit:
+            self._jtag = jtag
+            self._board = args.board
+            if self._jtag is not None:
+                self.configure()
 
     def configure(self):
         if self._board == Boards_e[0]: # auto
@@ -504,6 +505,7 @@ class SerdesTool:
             self._jtag.configure('ftdi://ftdi:232h/1')
         elif self._board == Boards_e[2]: # evb
             self._jtag.configure('ftdi://ftdi:2232h/1')
+
         self._jtag.reset()
         self._tool = JtagTool(self._jtag)
 
@@ -645,7 +647,7 @@ if __name__ == '__main__':
         p.add_argument('-b', dest='board', type=str, metavar=Boards_e, default=Boards_e[0], required=False, help='select board (default: %(default)s)')
         p.add_argument('--index-chain', dest='idx', default=0, required=False, help='device index in JTAG chain (default: %(default)s)')
         p.add_argument('--freq', type=ArgHzRegex, default='10M', metavar="[0 - 30M]", required=False, help='frequency setting; append "k" to the argument for kilohertz or "M" for megahertz (default: %(default)s)')
-        p.add_argument('-m', dest='filename', type=str, required=False, help='generate verilog or vhdl module; specify the file format with extension .v or .vhd')
+        p.add_argument('-m', dest='genmod', type=str, required=False, help='generate verilog or vhdl module and exit; specify the file format with extension .v or .vhd')
         p.add_argument('--rdregrx', dest='rdregrx', action='store_true', help='read rx regfile')
         p.add_argument('--rdregrxdata', dest='rdregrxdata', action='store_true', help='read rx data')
         p.add_argument('--rdregtx', dest='rdregtx', action='store_true', help='read tx regfile')
@@ -663,15 +665,15 @@ if __name__ == '__main__':
                 print(*line)
             sys.exit()
 
-        s = SerdesTool(args, jtag)
-        s.rd_id()
+        s = SerdesTool(args, jtag, hwinit=not args.genmod)
 
-        if args.filename is not None:
-            filename = args.filename.lower()
+        if args.genmod is not None:
+            filename = args.genmod.lower()
             if filename.endswith('.v') or filename.endswith('.sv'):
                 s.gen_module_vlog(filename)
             elif filename.endswith('.vhd') or filename.endswith('.vhdl'):
                 s.gen_module_vhdl(filename)
+            sys.exit()
 
         if args.rdregrx:
             s.rd_regfile_rx(verbose=2)
