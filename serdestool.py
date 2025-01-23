@@ -548,7 +548,8 @@ class SerdesTool:
             for idx, (param, data) in enumerate(self.regfile.fields.items()):
                 end = '' if (idx == len(self.regfile.fields.items())-1) else ';'
                 if data['mode'] != 'R':
-                    file.write(f'    {param} : bit_vector{end}\n')
+                    hbit = data['hbit']-data['lbit']
+                    file.write(f'    {param} : bit_vector({hbit} downto 0){end}\n')
             file.write(');\n')
             file.write('port (\n')
             for idx, (port, width) in enumerate(self.ports.items()):
@@ -572,7 +573,8 @@ class SerdesTool:
             for idx, (param, data) in enumerate(self.regfile.fields.items()):
                 end = '' if (idx == len(self.regfile.fields.items())-1) else ','
                 if data['mode'] != 'R':
-                    file.write(f'    {param} => X"{data['val']:X}"{end}\n')
+                    width = data['hbit']-data['lbit']+1
+                    file.write(f'    {param} => {width}X"{data['val']:X}"{end}\n')
             file.write(')\n')
             file.write('port map (\n')
             for idx, (port, width) in enumerate(self.ports.items()):
