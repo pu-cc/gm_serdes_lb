@@ -8,10 +8,14 @@ PRFLAGS  = -ccf src/$(TOP).ccf -cCP
 OFLFLAGS = --index-chain 0
 
 ## target sources
-VLOG_SRC = $(shell find ./src/ -type f \( -iname \*.v -o -iname \*.sv \))
+VLOG_SRC = $(shell find ./src/verilog/ -type f \( -iname \*.v -o -iname \*.sv \))
+VHDL_SRC = $(shell find ./src/vhdl/ -type f \( -iname \*.vhd -o -iname \*.vhdl \))
 
 synth: $(VLOG_SRC)
 	$(YOSYS) -ql log/synth.log -p 'read_verilog -sv $^; synth_gatemate -top $(TOP) $(YSFLAGS) -vlog net/$(TOP)_synth.v'
+
+synth_vhdl: $(VHDL_SRC)
+	$(YOSYS) -m ghdl -ql log/synth.log -p 'ghdl --std=08 --warn-no-binding --ieee=synopsys -C $^ -e $(TOP); synth_gatemate -top $(TOP) $(YSFLAGS) -vlog net/$(TOP)_synth.v'
 
 impl:
 	$(PR) -i net/$(TOP)_synth.v -o $(TOP) $(PRFLAGS) > log/$@.log
