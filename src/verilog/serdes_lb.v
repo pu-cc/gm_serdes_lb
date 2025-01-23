@@ -69,7 +69,7 @@ module serdes_lb (
     parameter ENABLE_8B10B = 1'b1;
     parameter ENABLE_COMMADETECT = 1'b1;
 
-    parameter PRBS_SEL =
+    parameter [2:0] PRBS_SEL =
         3'b000; // PRBS checker disabled
         //3'b001; // PRBS-7
         //3'b010; // PRBS-15
@@ -79,7 +79,7 @@ module serdes_lb (
         //3'b110; // 2 UI square wave (TX ONLY)
         //3'b111; // 20/40/80 UI square wave, depending on data path width (TX ONLY)
 
-    parameter LOOPBACK_SEL =
+    parameter [2:0] LOOPBACK_SEL =
         3'b000; // normal operation
         //3'b001; // near-end PCS Loopback
         //3'b010; // near-end PMA Loopback
@@ -89,7 +89,7 @@ module serdes_lb (
         //3'b110; // far-end PCS Loopback
         //3'b111; // reserved
 
-    parameter TX_PMA_LOOPBACK =
+    parameter [1:0] TX_PMA_LOOPBACK =
         //2'b00; // disabled
         2'b01; // loopback from TX driver
         //2'b10; // loopback from TX pads
@@ -109,7 +109,7 @@ module serdes_lb (
         N2 == 3 ? 2'b00 : (N2 == 2 ? 2'b01 : (N2 == 4 ? 2'b10 : (N2 == 5 ? 2'b11 : 2'bx)))
     }; // default: 6'h1B;
 
-    parameter PLL_OUT_DIVSEL  = {
+    parameter [1:0] PLL_OUT_DIVSEL = {
         OUTDIV == 1 ? 2'b00 : OUTDIV == 2 ? 2'b01 : OUTDIV == 4 ? 2'b11 : 2'bx
     }; // default: 2'h0;
 
