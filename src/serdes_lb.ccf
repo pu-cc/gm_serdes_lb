@@ -11,5 +11,5 @@ NET  "RX_PRBS_ERR_O_N"           Loc = "IO_EB_B5";
 NET  "RX_BUF_ERR_O_N"            Loc = "IO_EB_B6";
 NET  "TX_BUF_ERR_O_N"            Loc = "IO_EB_B7";
 
-NET  "CLK_CORE_PLL_O"            Loc = "IO_NB_A4";
-NET  "CLK_CORE_RX_O"             Loc = "IO_NB_A5";
+NET  "PLL_CLK_O"                 Loc = "IO_NB_A4";
+NET  "RX_CLK_O"                  Loc = "IO_NB_A5";
