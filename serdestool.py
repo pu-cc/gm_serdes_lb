@@ -541,6 +541,31 @@ class SerdesTool:
         with open(filename, 'w') as file:
             file.write('-- CC_SERDES instance generator\n')
             file.write(f'-- generated: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n')
+            # component
+            file.write('\n')
+            file.write('component CC_SERDES is\n')
+            file.write('generic (\n')
+            for idx, (param, data) in enumerate(self.regfile.fields.items()):
+                end = '' if (idx == len(self.regfile.fields.items())-1) else ';'
+                if data['mode'] != 'R':
+                    file.write(f'    {param} : bit_vector{end}\n')
+            file.write(');\n')
+            file.write('port (\n')
+            for idx, (port, width) in enumerate(self.ports.items()):
+                end = '' if idx == len(self.ports.items())-1 else ';'
+                if port.endswith('_I'):
+                    if width > 1:
+                        file.write(f'    {port} : in std_logic_vector({width-1} downto 0){end}\n')
+                    else:
+                        file.write(f'    {port} : in std_logic{end}\n')
+                else: # port.endswith('_O'):
+                    if width > 1:
+                        file.write(f'    {port} : out std_logic_vector({width-1} downto 0){end}\n')
+                    else:
+                        file.write(f'    {port} : out std_logic{end}\n')
+            file.write(');\n')
+            file.write('end component;\n')
+            # instance
             file.write('\n')
             file.write('i_cc_serdes: CC_SERDES\n')
             file.write('generic map (\n')
@@ -553,7 +578,10 @@ class SerdesTool:
             for idx, (port, width) in enumerate(self.ports.items()):
                 end = '' if idx == len(self.ports.items())-1 else ','
                 if port.endswith('_I'):
-                    file.write(f'    {port} => "{0}"{end}\n')
+                    if width > 1:
+                        file.write(f'    {port} => (others => \'0\'){end}\n')
+                    else:
+                        file.write(f'    {port} => \'{0}\'{end}\n')
                 else: # port.endswith('_O'):
                     file.write(f'    {port} => open{end}\n')
             file.write(');\n')
