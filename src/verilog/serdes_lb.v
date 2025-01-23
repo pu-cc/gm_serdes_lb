@@ -5,8 +5,8 @@ module serdes_lb (
     input trx_rstn_i,
 
     output [63:0] RX_DATA_O,
-    output CLK_CORE_PLL_O,
-    output CLK_CORE_RX_O,
+    output PLL_CLK_O,
+    output RX_CLK_O,
 
     output RX_RESET_DONE_O_N, TX_RESET_DONE_O_N,
     output TX_DETECT_RX_PRESENT_O_N, TX_DETECT_RX_DONE_O_N,
@@ -320,8 +320,8 @@ CC_SERDES #(
     .SERDES_TESTMODE(1'h0)
 ) i_cc_serdes (
     // ADPLL
-    .RX_CLK_O(CLK_CORE_RX_O), // CDR CLK
-    .PLL_CLK_O(CLK_CORE_PLL_O),
+    .RX_CLK_O(RX_CLK_O), // CDR CLK
+    .PLL_CLK_O(PLL_CLK_O),
     // LOPPBACK
     .LOOPBACK_I(LOOPBACK_SEL),
     // RESET
@@ -338,7 +338,7 @@ CC_SERDES #(
     .TX_RESET_DONE_O(TX_RESET_DONE_O),
     .RX_RESET_DONE_O(RX_RESET_DONE_O),
     // TX
-    .TX_CLK_I(CLK_CORE_PLL_O),
+    .TX_CLK_I(PLL_CLK_O),
     .TX_DATA_I({32'h00000000, 8'h00, 16'hCAFE, K28_5}),
     .TX_POWER_DOWN_N_I(1'h1),
     .TX_POLARITY_I(1'h0),
@@ -353,7 +353,7 @@ CC_SERDES #(
     .TX_DETECT_RX_I(1'b1),
     .TX_BUF_ERR_O(TX_BUF_ERR_O),
     // RX
-    .RX_CLK_I(CLK_CORE_RX_O),
+    .RX_CLK_I(RX_CLK_O),
     .RX_POWER_DOWN_N_I(1'h1),
     .RX_POLARITY_I(1'h0),
     .RX_PRBS_SEL_I(PRBS_SEL),
