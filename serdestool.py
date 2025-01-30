@@ -39,7 +39,7 @@ class bcolors:
     OK    = '\033[92m' # GREEN
     WARN  = '\033[93m' # YELLOW
     FAIL  = '\033[91m' # RED
-    DATA  = '\033[94m' # DATA
+    OVR   = '\033[94m' # BLUE
     RESET = '\033[0m'  # RESET COLOR
 
 def ArgHzRegex(value, pat=re.compile(r"^[0-9]+[kM]")):
@@ -489,7 +489,8 @@ class SerdesTool:
 
     # keywords for conditional coloring
     pos_cond = ["DONE", "PRESENT", "LOCKED", "IS_ALIGNED", "EN_ADPLL_CTRL", "CONFIG_SEL", "SERDES_ENABLE"]
-    neg_cond = ["ERR"]
+    neg_cond = ["ERR", "DOWN" "TESTMODE"]
+    ovr_cond = ["OVR"]
 
     def __init__(self, args, jtag, hwinit):
         if hwinit:
@@ -593,8 +594,10 @@ class SerdesTool:
             print(bcolors.OK + line + bcolors.RESET)
         elif any(cond in key for cond in self.pos_cond) and int(value) == 0:
             print(bcolors.WARN + line + bcolors.RESET)
-        elif any(cond in key for cond in self.neg_cond) and int(value) > 0:
+        elif any(cond in key for cond in self.neg_cond) and (int(value) < 1 if key.endswith('_N') else int(value) > 0):
             print(bcolors.FAIL + line + bcolors.RESET)
+        elif any(cond in key for cond in self.ovr_cond) and int(value) > 0:
+            print(bcolors.OVR + line + bcolors.RESET)
         else:
             print(line)
 
