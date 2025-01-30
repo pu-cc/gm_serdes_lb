@@ -4,6 +4,9 @@ module serdes_lb (
     input pll_rstn_i,
     input trx_rstn_i,
 
+    input RX_PRBS_CNT_RESET_I,
+    input TX_PRBS_FORCE_ERR_I,
+
     output [63:0] RX_DATA_O,
     output PLL_CLK_O,
     output RX_CLK_O,
@@ -44,19 +47,18 @@ module serdes_lb (
     wire [15:0] REGFILE_DO_O;
 
     // 8b/10b control bytes
-    parameter [7:0]
-        K28_0 = 8'h1C,
-        K28_1 = 8'h3C,
-        K28_2 = 8'h5C,
-        K28_3 = 8'h7C,
-        K28_4 = 8'h9C,
-        K28_5 = 8'hBC,
-        K28_6 = 8'hDC,
-        K28_7 = 8'hFC,
-        K23_7 = 8'hF7,
-        K27_7 = 8'hFB,
-        K29_7 = 8'hFD,
-        K30_7 = 8'hFE;
+    parameter [27:0] kChar =
+        '{8'h1C, 10'h303, 10'h0FC}; // K28_0
+        '{8'h3C, 10'h343, 10'h1FC}; // K28_1
+        '{8'h5C, 10'h383, 10'h27C}; // K28_2
+        '{8'h7C, 10'h3C3, 10'h2FC}; // K28_3
+        '{8'h9C, 10'h443, 10'h37C}; // K28_4
+        '{8'hBC, 10'h283, 10'h17C}; // K28_5
+        '{8'hDC, 10'h4C3, 10'h3FC}; // K28_6
+        '{8'hFC, 10'h503, 10'h47C}; // K28_7
+        '{8'hFB, 10'h11C, 10'h38C}; // K27_7
+        '{8'hFD, 10'h11C, 10'h38C}; // K29_7
+        '{8'hFE, 10'h11C, 10'h38C}; // K30_7
 
     // ADPLL clock settings
     parameter N1 = 1; // 1/2
@@ -153,10 +155,10 @@ CC_SERDES #(
     .RX_CDR_PHASE_ACC(16'h0000),
     .RX_CDR_SET_ACC_CONFIG(2'h0),
     .RX_CDR_FORCE_LOCK(1'h0),
-    .RX_ALIGN_MCOMMA_VALUE(10'h283),
+    .RX_ALIGN_MCOMMA_VALUE(kChar[19:10]),
     .RX_MCOMMA_ALIGN_OVR(1'h0),
     .RX_MCOMMA_ALIGN(1'h0),
-    .RX_ALIGN_PCOMMA_VALUE(10'h17C),
+    .RX_ALIGN_PCOMMA_VALUE(kChar[9:0]),
     .RX_PCOMMA_ALIGN_OVR(1'h0),
     .RX_PCOMMA_ALIGN(1'h0),
     .RX_ALIGN_COMMA_WORD(2'h3), // 11: 32 bit, 01: 16 bit, 00: 8 bit
@@ -339,11 +341,11 @@ CC_SERDES #(
     .RX_RESET_DONE_O(RX_RESET_DONE_O),
     // TX
     .TX_CLK_I(PLL_CLK_O),
-    .TX_DATA_I({32'h00000000, 8'h00, 16'hCAFE, K28_5}),
+    .TX_DATA_I({32'h00000000, 8'h00, 16'hCAFE, kChar[27:20]}),
     .TX_POWER_DOWN_N_I(1'h1),
     .TX_POLARITY_I(1'h0),
     .TX_PRBS_SEL_I(PRBS_SEL),
-    .TX_PRBS_FORCE_ERR_I(1'b0),
+    .TX_PRBS_FORCE_ERR_I(TX_PRBS_FORCE_ERR_I),
     .TX_8B10B_EN_I(ENABLE_8B10B),
     .TX_8B10B_BYPASS_I(8'h0),
     .TX_CHAR_IS_K_I(ENABLE_8B10B ? 8'b0000_0001 : 8'h00),
@@ -357,7 +359,7 @@ CC_SERDES #(
     .RX_POWER_DOWN_N_I(1'h1),
     .RX_POLARITY_I(1'h0),
     .RX_PRBS_SEL_I(PRBS_SEL),
-    .RX_PRBS_CNT_RESET_I(1'b0),
+    .RX_PRBS_CNT_RESET_I(RX_PRBS_CNT_RESET_I),
     .RX_PRBS_ERR_O(RX_PRBS_ERR_O),
     .RX_8B10B_EN_I(ENABLE_8B10B),
     .RX_8B10B_BYPASS_I(8'h0),
