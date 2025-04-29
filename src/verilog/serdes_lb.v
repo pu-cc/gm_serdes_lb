@@ -361,22 +361,22 @@ CC_SERDES #(
     .PLL_FT(11'h200),
     .PLL_OPEN_LOOP(1'h0),
     .PLL_SCAP_AUTO_CAL(1'h1),
-    .PLL_BISC_MODE(3'h4), // PLL_BISC_MODE[0]: enable
-    .PLL_BISC_TIMER_MAX(4'hF),
+    .PLL_BISC_MODE(3'h5), // MODE B, enable
+    .PLL_BISC_TIMER_MAX(4'hC),
     .PLL_BISC_OPT_DET_IND(1'h0),
     .PLL_BISC_PFD_SEL(1'h0),
     .PLL_BISC_DLY_DIR(1'h0),
     .PLL_BISC_COR_DLY(3'h1),
-    .PLL_BISC_CAL_SIGN(1'h0),
+    .PLL_BISC_CAL_SIGN(1'h1),
     .PLL_BISC_CAL_AUTO(1'h1),
-    .PLL_BISC_CP_MIN(5'h4),
-    .PLL_BISC_CP_MAX(5'h12),
-    .PLL_BISC_CP_START(5'hC),
+    .PLL_BISC_CP_MIN(5'h6),
+    .PLL_BISC_CP_MAX(5'h1E),
+    .PLL_BISC_CP_START(5'h6),
     .PLL_BISC_DLY_PFD_MON_REF(5'h0),
     .PLL_BISC_DLY_PFD_MON_DIV(5'h2),
     .SERDES_ENABLE(1'h1),
     .SERDES_AUTO_INIT(1'h0),
-    .SERDES_TESTMODE(1'h0)
+    .SERDES_TESTMODE(1'h1)
 ) i_cc_serdes (
     // ADPLL
     .RX_CLK_O(RX_CLK_O), // CDR CLK
