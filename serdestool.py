@@ -16,16 +16,22 @@
 #
 #  Visit https://colognechip.com for more information.
 #
-#  Copyright (C) 2022, 2023, 2024 Cologne Chip AG <support@colognechip.com>
+#  Copyright (C) 2022 - 2025 Cologne Chip AG <support@colognechip.com>
 #  Authors: Patrick Urban
 #
 
 import re
 import sys
+import math
+import curses
+import random
+import signal
 import argparse
 import datetime
+import threading
 
 from time import sleep
+from itertools import chain
 
 from pyftdi.ftdi import Ftdi
 from pyftdi.jtag import JtagEngine
@@ -71,6 +77,27 @@ def FindAndFormatFtdiAddr(idx=0) -> str:
         raise Exception('Error: No FTDI device found.')
     d = d[idx][0]
     return f'ftdi://ftdi:{ftdiname[d[1]]}/1'
+
+class ColorFormatter:
+    pos_cond = ["DONE", "PRESENT", "LOCKED", "IS_ALIGNED", "EN_ADPLL_CTRL", "CONFIG_SEL", "SERDES_ENABLE"]
+    neg_cond = ["ERR", "DOWN", "TESTMODE"]
+    ovr_cond = ["OVR"]
+
+    @staticmethod
+    def get_color_pair(key, value):
+        """Returns the curses color pair based on the value conditions."""
+        try:
+            value = int(value)  # Convert safely to integer
+        except ValueError:
+            return 0  # Default color if conversion fails
+
+        if any(cond in key for cond in ColorFormatter.pos_cond):
+            return 1 if value != 0 else 2  # Green for positive, Yellow for zero
+        elif any(cond in key for cond in ColorFormatter.neg_cond):
+            return 3 if (value < 1 if key.endswith('_N') else value > 0) else 0  # Red for errors
+        elif any(cond in key for cond in ColorFormatter.ovr_cond) and value > 0:
+            return 4  # Blue for "OVR" values
+        return 0  # Default
 
 class JtagTool:
     CMD_JTAG_ID                = '000000' # 0x00
@@ -419,7 +446,7 @@ class SerdesTool:
         'PLL_BISC_CO':              {'addr': 0x5B, 'mode': 'R',   'hbit': 15, 'lbit':  0, 'val': 0},
         'SERDES_ENABLE':            {'addr': 0x5C, 'mode': 'R/W', 'hbit':  0, 'lbit':  0, 'val': 1},
         'SERDES_AUTO_INIT':         {'addr': 0x5C, 'mode': 'R/W', 'hbit':  1, 'lbit':  1, 'val': 0},
-        'SERDES_TESTMODE':          {'addr': 0x5C, 'mode': 'R/W', 'hbit':  2, 'lbit':  2, 'val': 0},
+        'SERDES_TESTMODE':          {'addr': 0x5C, 'mode': 'R/C', 'hbit':  2, 'lbit':  2, 'val': 0},
     })
 
     ports = {
@@ -489,8 +516,11 @@ class SerdesTool:
 
     # keywords for conditional coloring
     pos_cond = ["DONE", "PRESENT", "LOCKED", "IS_ALIGNED", "EN_ADPLL_CTRL", "CONFIG_SEL", "SERDES_ENABLE"]
-    neg_cond = ["ERR", "DOWN" "TESTMODE"]
+    neg_cond = ["ERR", "DOWN", "TESTMODE"]
     ovr_cond = ["OVR"]
+
+    # Thread-safe lock for updating values
+    param_lock = threading.Lock()
 
     def __init__(self, args, jtag, hwinit):
         if hwinit:
@@ -671,6 +701,281 @@ class SerdesTool:
                     line = f'{key:24} {int(v):4X}\'h {int(v):6}\'d'
                     self.fprint(key, v, line)
 
+    def update_values(self):
+        while True:
+            sleep(1)  # Update every second
+            with self.param_lock:
+                #for param in self.regfile.fields:
+                #    self.regfile.fields[param]['val'] = random.randint(0, 16)
+                for addr in chain(range(0x00, 0x30), range(0x30, 0x43), range(0x50, 0x5D)):
+                    self._tool.wr_serdes_regfile(addr=addr, data=0, mask=0, wren=0)
+                    word = self._tool.rd_serdes_regfile()
+                    filtered_entries = {key: value for key, value in self.regfile.fields.items() if value['addr'] == addr}
+                    for (key, value) in filtered_entries.items():
+                        val = word[value['lbit']:value['hbit']+1]
+                        self.regfile.fields[key]['val'] = int(val)
+
+    def draw_parameters(self, stdscr):
+        curses.curs_set(0)
+        stdscr.keypad(True)
+        stdscr.timeout(10) #stdscr.nodelay(True)  # Non-blocking input
+
+        # Initialize colors
+        curses.start_color()
+        curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)   # OK (Green)
+        curses.init_pair(2, curses.COLOR_YELLOW, curses.COLOR_BLACK)  # WARN (Yellow)
+        curses.init_pair(3, curses.COLOR_RED, curses.COLOR_BLACK)     # FAIL (Red)
+        curses.init_pair(4, curses.COLOR_BLUE, curses.COLOR_BLACK)    # OVR (Blue)
+        curses.init_pair(5, curses.COLOR_WHITE, curses.COLOR_BLACK)   # Normal text
+
+        def handle_resize(signum, frame):
+            curses.endwin()
+            stdscr.refresh()
+
+        signal.signal(signal.SIGWINCH, handle_resize)
+
+        selected_index = 0
+        show_hex = False
+        search_results = []
+        search_index = 0
+
+        while True:
+            max_y, max_x = stdscr.getmaxyx()
+            max_name_length = max(len(name) for name in self.regfile.fields.keys())
+            col_width = max_name_length + 8
+            num_columns = max(1, max_x // col_width)
+            num_rows = math.ceil(len(self.regfile.fields) / num_columns)
+            param_list = list(self.regfile.fields.items())
+
+            # Extract values for bit rate calculation
+            PLL_MAIN_DIVSEL = self.regfile.fields.get("PLL_MAIN_DIVSEL", {}).get("val", 0x1B)
+            PLL_OUT_DIVSEL = self.regfile.fields.get("PLL_OUT_DIVSEL", {}).get("val", 0x0)
+            TX_DATAPATH_SEL = self.regfile.fields.get("TX_DATAPATH_SEL", {}).get("val", 0x0)
+
+            # Decode PLL values
+            N3 = {0b00: 3, 0b10: 4, 0b11: 5}.get((PLL_MAIN_DIVSEL >> 3) & 0b11, None)
+            N1 = {0b0: 1, 0b1: 2}.get((PLL_MAIN_DIVSEL >> 2) & 0b1, None)
+            N2 = {0b00: 3, 0b01: 2, 0b10: 4, 0b11: 5}.get(PLL_MAIN_DIVSEL & 0b11, None)
+            OUTDIV = {0b00: 1, 0b01: 2, 0b11: 4}.get(PLL_OUT_DIVSEL, None)
+
+            bit_rate_clock = 2 * 100e6 * N1 * N2 * N3 / OUTDIV if None not in (N1, N2, N3, OUTDIV) else None
+
+            # Decode TX_DATAPATH_SEL
+            datapath_mode = (TX_DATAPATH_SEL & 0b10) >> 1  # Extract MSB
+            is_64_bit = datapath_mode == 1  # If `1x`, it is 64-bit
+
+            # Determine AddDiv based on OUTDIV
+            if is_64_bit:
+                AddDiv = {0b00: 2, 0b01: 4, 0b11: 8}.get(PLL_OUT_DIVSEL, None)
+            else:
+                AddDiv = {0b00: 1, 0b01: 2, 0b11: 4}.get(PLL_OUT_DIVSEL, None)
+
+            data_path_clock = (100e6 * N1 * N2 * N3) / (20 * AddDiv) if None not in (N1, N2, N3, OUTDIV, AddDiv) else None
+
+            bit_rate_str = f"Bit Rate Clock: {bit_rate_clock / 1e6:.2f} MHz" if bit_rate_clock else "Invalid PLL Config"
+            data_path_str = f"Data Path Clock: {data_path_clock / 1e6:.2f} MHz {is_64_bit}" if data_path_clock else "Invalid Data Path Config"
+
+            stdscr.clear()
+            stdscr.addstr(0, 2, " FPGA SerDes Parameters (Auto-Update Enabled) ", curses.A_BOLD | curses.A_REVERSE)
+
+            with self.param_lock:
+                for row in range(num_rows):
+                    for col in range(num_columns):
+                        index = row + col * num_rows
+                        if index >= len(param_list):
+                            continue
+
+                        name, data = param_list[index]
+                        value = data['val']
+                        mode = data['mode']  # Get mode (R/W, W/C, R/C, R)
+                        color_pair = ColorFormatter.get_color_pair(name, value)
+
+                        formatted_value = f"0x{value:X}" if show_hex else f"{value}"
+
+                        # Read-only and Write/Clear (dimmed text)
+                        text_attr = curses.color_pair(color_pair) | curses.A_DIM if mode in ["R", "R/C"] else curses.color_pair(color_pair)
+
+                        x_pos = col * col_width + 2
+                        y_pos = row + 2
+
+                        # Highlight selected row
+                        if index == selected_index:
+                            stdscr.addstr(y_pos, x_pos, f"{name:<{max_name_length}} {formatted_value:<8}", curses.A_REVERSE)
+                        else:
+                            # Print parameter name (dimmed for R & W/C)
+                            stdscr.addstr(y_pos, x_pos, f"{name:<{max_name_length}}", text_attr)
+
+                            # Print value in color
+                            stdscr.addstr(y_pos, x_pos + max_name_length + 1, f"{formatted_value:<8}", curses.color_pair(color_pair))
+
+
+            stdscr.addstr(max_y - 5, 2, bit_rate_str)
+            stdscr.addstr(max_y - 4, 2, data_path_str)
+
+            search_hint = "[n] Next match  |  " if search_results else ""
+            stdscr.addstr(max_y - 2, 2, f"{search_hint}[Arrow Keys] Navigate | [Enter] Edit | [/] Find | [h] Toggle HEX/DEC | [q] Quit", curses.A_BOLD)
+
+            stdscr.refresh()
+
+            try:
+                key = stdscr.getch()
+            except curses.error:
+                key = -1  # No input
+
+            if key == ord("h"):
+                show_hex = not show_hex
+            elif key == curses.KEY_UP and selected_index - 1 >= 0:
+                selected_index -= 1
+            elif key == curses.KEY_DOWN and selected_index + 1 < len(param_list):
+                selected_index += 1
+            elif key == curses.KEY_LEFT and selected_index - num_rows >= 0:
+                selected_index -= num_rows
+            elif key == curses.KEY_RIGHT and selected_index + num_rows < len(param_list):
+                selected_index += num_rows
+            elif key == ord("\n"):
+                if param_list[selected_index][1]['mode'] in ["R", "R/C"]:
+                    self.error_message(stdscr, "Cannot edit read-only parameter!")
+                else:
+                    self.edit_value_popup(stdscr, param_list[selected_index])
+            elif key == ord("/"):
+                search_results, search_index = self.find_parameter(stdscr, param_list)
+                if search_results:
+                    selected_index = search_results[search_index]
+            elif key == ord("n") and search_results:
+                search_index = (search_index + 1) % len(search_results)
+                selected_index = search_results[search_index]
+            elif key == ord("q"):
+                break
+
+    def edit_value_popup(self, stdscr, param):
+        name, data = param
+        max_y, max_x = stdscr.getmaxyx()
+
+        # Calculate the valid range from `hbit` and `lbit`
+        hbit, lbit = data['hbit'], data['lbit']
+        mask = ((1 << (hbit - lbit + 1)) - 1) << lbit
+        addr = data['addr']
+        min_value = 0
+        max_value = (1 << (hbit - lbit + 1)) - 1  # Compute max based on bit range
+
+        win_height, win_width = 9, 50
+        start_y = (max_y - win_height) // 2
+        start_x = (max_x - win_width) // 2
+
+        win = curses.newwin(win_height, win_width, start_y, start_x)
+        win.box()
+        win.addstr(1, 2, f"Editing:  {name}", curses.A_BOLD)
+        win.addstr(2, 2, f"Position: addr=0x{addr:02X} mask=0x{mask:04X}")
+        win.addstr(3, 2, f"Current:  {data['val']}  (Range: {min_value} - {max_value})")  # Show valid range
+        win.addstr(5, 2, "New value: ")
+        win.addstr(7, 2, "[Enter] Save  |  [ESC/q] Cancel", curses.A_DIM)
+
+        win.refresh()
+        curses.curs_set(1)
+        win.keypad(True)
+
+        curses.echo()
+        new_val = ""
+
+        while True:
+            key = win.getch()
+
+            if key in (27, ord("q")):
+                break
+            elif key == ord("\n"):
+                try:
+                    entered_value = int(new_val, 0)  # Convert input to integer
+                    if min_value <= entered_value <= max_value:
+                        with self.param_lock:
+                            #data['val'] = entered_value  # Apply change if within range
+                            self._tool.wr_serdes_regfile(addr=addr, data=entered_value << lbit, mask=mask, wren=1)
+                            self._tool.rd_serdes_regfile()
+                        break
+                    else:
+                        win.addstr(6, 2, "Out of range! Try again.", curses.A_BOLD | curses.color_pair(3))
+                        win.refresh()
+                        time.sleep(1)
+                        win.addstr(6, 2, " " * 30)  # Clear error message
+                except ValueError:
+                    win.addstr(6, 2, "Invalid input!", curses.A_BOLD | curses.color_pair(3))
+                    win.refresh()
+                    time.sleep(1)
+                    win.addstr(6, 2, " " * 30)  # Clear error message
+            elif key in (curses.KEY_BACKSPACE, 127):
+                new_val = new_val[:-1]
+                win.addstr(5, 13, " " * 10)  # Clear previous input
+            elif key in range(32, 127):
+                new_val += chr(key)
+
+            win.addstr(5, 13, new_val)
+            win.refresh()
+
+        curses.noecho()
+        curses.curs_set(0)
+
+    def find_parameter(self, stdscr, param_list):
+        max_y, max_x = stdscr.getmaxyx()
+        win_height, win_width = 4, 50
+        start_y = (max_y - win_height) // 2
+        start_x = (max_x - win_width) // 2
+
+        win = curses.newwin(win_height, win_width, start_y, start_x)
+        win.box()
+        win.addstr(1, 2, "Find: ")
+        win.addstr(2, 2, "[ESC/q] Cancel", curses.A_DIM)
+
+        win.refresh()
+        curses.curs_set(1)
+        curses.echo()
+
+        search_term = ""
+
+        while True:
+            key = win.getch()
+
+            if key in (27, ord("q")):
+                return [], 0
+            elif key == ord("\n"):
+                break
+            elif key in (curses.KEY_BACKSPACE, 127):
+                search_term = search_term[:-1]
+                win.addstr(1, 8, " " * 40)
+            elif key in range(32, 127):
+                search_term += chr(key)
+
+            win.addstr(1, 8, search_term)
+            win.refresh()
+
+        curses.noecho()
+        curses.curs_set(0)
+
+        search_term = search_term.strip().lower()
+
+        if not search_term:
+            return [], 0
+
+        matches = [i for i, (name, _) in enumerate(param_list) if search_term in name.lower()]
+
+        if not matches:
+            self.error_message(stdscr, "No matches found!")
+            return [], 0
+
+        return matches, 0
+
+    def error_message(self, stdscr, message):
+        max_y, max_x = stdscr.getmaxyx()
+        win_height, win_width = 3, len(message) + 10
+        start_y = (max_y - win_height) // 2
+        start_x = (max_x - win_width) // 2
+
+        win = curses.newwin(win_height, win_width, start_y, start_x)
+        win.box()
+        win.addstr(1, 2, message, curses.A_BOLD)
+
+        win.refresh()
+        curses.napms(1500)
+        del win
+
 
 if __name__ == '__main__':
     try:
@@ -679,12 +984,13 @@ if __name__ == '__main__':
         p.add_argument('-l', '--list', dest='listdev', action='store_true', help='list available boards/programmers and exit')
         p.add_argument('-b', dest='board', type=str, metavar=Boards_e, default=Boards_e[0], required=False, help='select board (default: %(default)s)')
         p.add_argument('--index-chain', dest='idx', default=0, required=False, help='device index in JTAG chain (default: %(default)s)')
-        p.add_argument('--freq', type=ArgHzRegex, default='10M', metavar="[0 - 30M]", required=False, help='frequency setting; append "k" to the argument for kilohertz or "M" for megahertz (default: %(default)s)')
+        p.add_argument('--freq', type=ArgHzRegex, default='20M', metavar="[0 - 30M]", required=False, help='frequency setting; append "k" to the argument for kilohertz or "M" for megahertz (default: %(default)s)')
         p.add_argument('-m', dest='genmod', type=str, required=False, help='generate verilog or vhdl module and exit; specify the file format with extension .v or .vhd')
         p.add_argument('--rdregrx', dest='rdregrx', action='store_true', help='read rx regfile')
         p.add_argument('--rdregrxdata', dest='rdregrxdata', action='store_true', help='read rx data')
         p.add_argument('--rdregtx', dest='rdregtx', action='store_true', help='read tx regfile')
         p.add_argument('--rdregpll', dest='rdregpll', action='store_true', help='read pll regfile')
+        p.add_argument('--gui', dest='gui', action='store_true', help='start curses gui')
 
         args = p.parse_args()
         usb  = UsbTools()
@@ -708,14 +1014,19 @@ if __name__ == '__main__':
                 s.gen_module_vhdl(filename)
             sys.exit()
 
-        if args.rdregrx:
-            s.rd_regfile_rx(verbose=2)
-        if args.rdregrxdata:
-            s.rd_regfile_rx_data(verbose=2)
-        if args.rdregtx:
-            s.rd_regfile_tx(verbose=2)
-        if args.rdregpll:
-            s.rd_regfile_pll(verbose=2)
+        if args.gui:
+            update_thread = threading.Thread(target=s.update_values, daemon=True)
+            update_thread.start()
+            curses.wrapper(s.draw_parameters)
+        else:
+            if args.rdregrx:
+                s.rd_regfile_rx(verbose=2)
+            if args.rdregrxdata:
+                s.rd_regfile_rx_data(verbose=2)
+            if args.rdregtx:
+                s.rd_regfile_tx(verbose=2)
+            if args.rdregpll:
+                s.rd_regfile_pll(verbose=2)
 
     except Exception as e:
         print(e)
