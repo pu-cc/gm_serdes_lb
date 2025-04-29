@@ -3,9 +3,11 @@
 module serdes_lb (
     input pll_rstn_i,
     input trx_rstn_i,
+    input ref_clk,
 
     input RX_PRBS_CNT_RESET_I,
     input TX_PRBS_FORCE_ERR_I,
+    input RX_COMMA_DETECT_EN_I,
 
     output [63:0] RX_DATA_O,
     output PLL_CLK_O,
@@ -17,8 +19,17 @@ module serdes_lb (
     output RX_PRBS_ERR_O_N
 );
 
-    wire trx_rst_i = ~trx_rstn_i;
-    wire pll_rst_i = ~pll_rstn_i;
+    // reset
+    reg [8:0] rst_cnt = 0;
+    wire rstn = &rst_cnt;
+    wire rst = !rstn;
+
+    always @(posedge ref_clk) begin
+        rst_cnt <= rst_cnt + !rstn;
+    end
+
+    wire trx_rst_i = ~trx_rstn_i | rst;
+    wire pll_rst_i = ~pll_rstn_i | rst;
 
     wire CLK_CORE_PLL_O_N;
 
@@ -48,25 +59,26 @@ module serdes_lb (
 
     // 8b/10b control bytes
     parameter [27:0] kChar =
-        '{8'h1C, 10'h303, 10'h0FC}; // K28_0
-        '{8'h3C, 10'h343, 10'h1FC}; // K28_1
-        '{8'h5C, 10'h383, 10'h27C}; // K28_2
-        '{8'h7C, 10'h3C3, 10'h2FC}; // K28_3
-        '{8'h9C, 10'h443, 10'h37C}; // K28_4
-        '{8'hBC, 10'h283, 10'h17C}; // K28_5
-        '{8'hDC, 10'h4C3, 10'h3FC}; // K28_6
-        '{8'hFC, 10'h503, 10'h47C}; // K28_7
-        '{8'hFB, 10'h11C, 10'h38C}; // K27_7
-        '{8'hFD, 10'h11C, 10'h38C}; // K29_7
-        '{8'hFE, 10'h11C, 10'h38C}; // K30_7
+        //{8'hxx, 10'h000, 10'h000}; // K28_5
+        //{8'h1C, 10'h303, 10'h0FC}; // K28_0
+        //{8'h3C, 10'h343, 10'h1FC}; // K28_1
+        //{8'h5C, 10'h383, 10'h27C}; // K28_2
+        //{8'h7C, 10'h3C3, 10'h2FC}; // K28_3
+        //{8'h9C, 10'h443, 10'h37C}; // K28_4
+        {8'hBC, 10'h283, 10'h17C}; // K28_5
+        //{8'hDC, 10'h4C3, 10'h3FC}; // K28_6
+        //{8'hFC, 10'h503, 10'h47C}; // K28_7
+        //{8'hFB, 10'h11C, 10'h38C}; // K27_7
+        //{8'hFD, 10'h11C, 10'h38C}; // K29_7
+        //{8'hFE, 10'h11C, 10'h38C}; // K30_7
 
     // ADPLL clock settings
     parameter N1 = 1; // 1/2
     parameter N2 = 2; // 2/3/4/5
     parameter N3 = 3; // 3/4/5
-    parameter OUTDIV = 4; // 1/2/4
+    parameter OUTDIV = 2; // 1/2/4
 
-    parameter DATAPATH = 80; // 80/64, 40/32, 20/16
+    parameter DATAPATH = 80; // 80, 40, 20
 
     parameter ENABLE_8B10B = 1'b1;
     parameter ENABLE_COMMADETECT = 1'b1;
@@ -92,16 +104,16 @@ module serdes_lb (
         //3'b111; // reserved
 
     parameter [1:0] TX_PMA_LOOPBACK =
-        //2'b00; // disabled
-        2'b01; // loopback from TX driver
+        2'b00; // disabled
+        //2'b01; // loopback from TX driver
         //2'b10; // loopback from TX pads
 
     parameter [1:0] DATAPATH_SEL = {
-        (DATAPATH == 80) || (DATAPATH == 64) ? 2'b11 : (DATAPATH == 40) || (DATAPATH == 32) ? 2'b01 : (DATAPATH == 20) || (DATAPATH == 16) ? 2'b00 : 2'bx
+        (DATAPATH == 80) ? 2'b11 : (DATAPATH == 40) ? 2'b01 : (DATAPATH == 20) ? 2'b00 : 2'bx
     }; // default: 2'h3
 
     parameter [5:0] PLL_FCNTRL = {
-        DATAPATH == 80 ? 6'h3A : (DATAPATH == 64 ? 6'd54 : (DATAPATH == 40 ? 6'h3A : (DATAPATH == 32 ? 6'd54 : (DATAPATH == 20 ? 6'd26 : (DATAPATH == 16 ? 6'd23 : 6'bx)))))
+        DATAPATH == 80 ? 6'h3A : (DATAPATH == 40 ? 6'h3A : (DATAPATH == 20 ? 6'd26 : 6'bx))
     }; // default: 6'h3A = 58 ^= 20;
 
     parameter [5:0] PLL_MAIN_DIVSEL = {
@@ -114,6 +126,51 @@ module serdes_lb (
     parameter [1:0] PLL_OUT_DIVSEL = {
         OUTDIV == 1 ? 2'b00 : OUTDIV == 2 ? 2'b01 : OUTDIV == 4 ? 2'b11 : 2'bx
     }; // default: 2'h0;
+
+    parameter [14:0] RX_EYE_MEAS_CFG = {11'b0, 3'b0};
+
+    function [63:0] calcTxData(input integer pos, input comma);
+    begin
+        if (comma == 1'b1) begin
+            calcTxData =
+                (pos == 0) ? 64'h4A4A4A4A_4A4A4ABC :
+                (pos == 1) ? 64'h4A4A4A4A_4A4ABC4A :
+                (pos == 2) ? 64'h4A4A4A4A_4ABC4A4A :
+                (pos == 3) ? 64'h4A4A4A4A_BC4A4A4A :
+                (pos == 4) ? 64'h4A4A4ABC_4A4A4A4A :
+                (pos == 5) ? 64'h4A4ABC4A_4A4A4A4A :
+                (pos == 6) ? 64'h4ABC4A4A_4A4A4A4A : 64'hBC4A4A4A_4A4A4A4A;
+        end
+        else begin
+            calcTxData =
+                (pos == 0) ? 64'h08070605_04030201 :
+                (pos == 1) ? 64'h07060504_03020108 :
+                (pos == 2) ? 64'h06050403_02010807 :
+                (pos == 3) ? 64'h05040302_01080706 :
+                (pos == 4) ? 64'h04030201_08070605 :
+                (pos == 5) ? 64'h03020108_07060504 :
+                (pos == 6) ? 64'h02010807_06050403 : 64'h01080706_05040302;
+        end
+    end
+    endfunction
+
+    function [7:0] calcTxK(input integer pos, input comma);
+    begin
+        if (comma == 1'b1) begin
+            calcTxK =
+                (comma_pos == 0) ? 8'b0000_0001 :
+                (comma_pos == 1) ? 8'b0000_0010 :
+                (comma_pos == 2) ? 8'b0000_0100 :
+                (comma_pos == 3) ? 8'b0000_1000 :
+                (comma_pos == 4) ? 8'b0001_0000 :
+                (comma_pos == 5) ? 8'b0010_0000 :
+                (comma_pos == 6) ? 8'b0100_0000 : 8'b1000_0000;
+        end
+        else begin
+            calcTxK = 8'b0000_0000;
+        end
+    end
+    endfunction
 
 
 // CC_SERDES instance generator
@@ -168,7 +225,7 @@ CC_SERDES #(
     .RX_COMMA_DETECT_EN(1'h0),
     .RX_SLIDE(2'h0),
     .RX_EYE_MEAS_EN(1'h0),
-    .RX_EYE_MEAS_CFG(15'h0),
+    .RX_EYE_MEAS_CFG(RX_EYE_MEAS_CFG),
     .RX_MON_PH_OFFSET(6'h0),
     .RX_EI_BIAS(4'h4),
     .RX_EI_BW_SEL(4'h4),
@@ -186,12 +243,12 @@ CC_SERDES #(
     .RX_PMA_LOOPBACK(1'h0),
     .RX_PCS_LOOPBACK(1'h0),
     .RX_DATAPATH_SEL(DATAPATH_SEL),
-    .RX_PRBS_OVR(1'h0),
-    .RX_PRBS_SEL(0),
+    .RX_PRBS_OVR(1'b0),
+    .RX_PRBS_SEL(PRBS_SEL),
     .RX_LOOPBACK_OVR(1'h0),
     .RX_PRBS_CNT_RESET(1'h0),
     .RX_POWER_DOWN_OVR(1'h0),
-    .RX_POWER_DOWN_N(1'h0),
+    .RX_POWER_DOWN_N(1'h1),
     .RX_RESET_OVR(1'h0),
     .RX_RESET(1'h0),
     .RX_PMA_RESET_OVR(1'h0),
@@ -263,8 +320,8 @@ CC_SERDES #(
     .TX_PMA_LOOPBACK(TX_PMA_LOOPBACK),
     .TX_PCS_LOOPBACK(1'h0),
     .TX_DATAPATH_SEL(DATAPATH_SEL),
-    .TX_PRBS_OVR(1'h0),
-    .TX_PRBS_SEL(3'b0),
+    .TX_PRBS_OVR(1'b0),
+    .TX_PRBS_SEL(PRBS_SEL),
     .TX_PRBS_FORCE_ERR(1'h0),
     .TX_LOOPBACK_OVR(1'h0),
     .TX_POWER_DOWN_OVR(1'h0),
@@ -348,7 +405,7 @@ CC_SERDES #(
     .TX_PRBS_FORCE_ERR_I(TX_PRBS_FORCE_ERR_I),
     .TX_8B10B_EN_I(ENABLE_8B10B),
     .TX_8B10B_BYPASS_I(8'h0),
-    .TX_CHAR_IS_K_I(ENABLE_8B10B ? 8'b0000_0001 : 8'h00),
+    .TX_CHAR_IS_K_I(RX_COMMA_DETECT_EN_I ? 8'b0000_0001 : 8'h00),
     .TX_CHAR_DISPMODE_I(8'h0),
     .TX_CHAR_DISPVAL_I(8'h0),
     .TX_ELEC_IDLE_I(1'h0),
@@ -364,10 +421,10 @@ CC_SERDES #(
     .RX_8B10B_EN_I(ENABLE_8B10B),
     .RX_8B10B_BYPASS_I(8'h0),
     .RX_EN_EI_DETECTOR_I(1'h0),
-    .RX_COMMA_DETECT_EN_I(1'h1), // 1
+    .RX_COMMA_DETECT_EN_I(RX_COMMA_DETECT_EN_I),
     .RX_SLIDE_I(1'h0),
-    .RX_MCOMMA_ALIGN_I(1'h1),
-    .RX_PCOMMA_ALIGN_I(1'h1),
+    .RX_MCOMMA_ALIGN_I(RX_COMMA_DETECT_EN_I),
+    .RX_PCOMMA_ALIGN_I(RX_COMMA_DETECT_EN_I),
     .RX_DATA_O(RX_DATA_O),
     .RX_NOT_IN_TABLE_O(),
     .RX_CHAR_IS_COMMA_O(),
