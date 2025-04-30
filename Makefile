@@ -6,7 +6,7 @@ PACK = gmpack
 OFL = openFPGALoader
 
 TOP = serdes_lb
-PRFLAGS  = -ccf src/$(TOP).ccf -cCP
+PRFLAGS  = -ccf src/$(TOP).ccf -cCP -crc
 NEXTPNRFLAGS = --vopt allow-unconstrained
 OFLFLAGS = --index-chain 0
 
@@ -32,10 +32,10 @@ net/$(TOP)_synth.json: $(VLOG_SRC)
 	$(YOSYS) -l log/synth.log -p 'read_verilog -sv $^; synth_gatemate -top $(TOP) -luttree $(YSFLAGS) -vlog net/$(TOP)_synth.v -json net/$(TOP)_synth.json'
 
 $(TOP).txt: net/$(TOP)_synth.json
-	$(NEXTPNR) --device CCGM1A1 --json net/$(TOP)_synth.json --vopt ccf=src/$(TOP).ccf $(NEXTPNRFLAGS) --vopt out=$(TOP)_impl.txt --router router2
+	$(NEXTPNR) --device CCGM1A1 --json net/$(TOP)_synth.json --vopt ccf=src/$(TOP).ccf $(NEXTPNRFLAGS) --vopt out=$(TOP).txt --router router2
 
 $(TOP).bit: $(TOP).txt
-	$(PACK) (TOP).txt (TOP).bit
+	$(PACK) $(TOP).txt $(TOP).bit
 
 jtag: $(TOP).bit
 	$(OFL) $(OFLFLAGS) -b gatemate_evb_jtag $(TOP).bit
