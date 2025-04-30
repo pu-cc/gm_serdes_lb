@@ -631,10 +631,17 @@ class SerdesTool:
         else:
             print(line)
 
+    def rd_regfile(self, addr) -> int:
+        self._tool.wr_serdes_regfile(addr=addr, data=0, mask=0, wren=0)
+        return self._tool.rd_serdes_regfile()
+
+    def wr_regfile(self, addr, data, mask):
+        self._tool.wr_serdes_regfile(addr=addr, data=data, mask=mask, wren=1)
+        self._tool.rd_serdes_regfile()
+
     def rd_regfile_rx(self, verbose=0):
         for addr in range(0x00, 0x30):
-            self._tool.wr_serdes_regfile(addr=addr, data=0, mask=0, wren=0)
-            word = self._tool.rd_serdes_regfile()
+            word = self.rd_regfile(addr)
             if verbose == 1:
                 print(f'{addr:02X}: 0x{int(word):04X}')
             elif verbose == 2:
@@ -648,8 +655,7 @@ class SerdesTool:
         rx_data_80bit = 0
         word_idx = 0
         for addr in range(0x20, 0x25):
-            self._tool.wr_serdes_regfile(addr=addr, data=0, mask=0, wren=0)
-            word = self._tool.rd_serdes_regfile()
+            word = self.rd_regfile(addr)
             if verbose == 1:
                 print(f'{addr:02X}: 0x{int(word):04X}')
             elif verbose == 2:
@@ -677,8 +683,7 @@ class SerdesTool:
 
     def rd_regfile_tx(self, verbose=0):
         for addr in range(0x30, 0x43): # 0x43..0x4F unused
-            self._tool.wr_serdes_regfile(addr=addr, data=0, mask=0, wren=0)
-            word = self._tool.rd_serdes_regfile()
+            word = self.rd_regfile(addr)
             if verbose == 1:
                 print(f'{addr:02X}: 0x{int(word):04X}')
             elif verbose == 2:
@@ -690,8 +695,7 @@ class SerdesTool:
 
     def rd_regfile_pll(self, verbose=0):
         for addr in range(0x50, 0x5D):
-            self._tool.wr_serdes_regfile(addr=addr, data=0, mask=0, wren=0)
-            word = self._tool.rd_serdes_regfile()
+            word = self.rd_regfile(addr)
             if verbose == 1:
                 print(f'{addr:02X}: 0x{int(word):04X}')
             elif verbose == 2:
@@ -708,8 +712,7 @@ class SerdesTool:
                 #for param in self.regfile.fields:
                 #    self.regfile.fields[param]['val'] = random.randint(0, 16)
                 for addr in chain(range(0x00, 0x30), range(0x30, 0x43), range(0x50, 0x5D)):
-                    self._tool.wr_serdes_regfile(addr=addr, data=0, mask=0, wren=0)
-                    word = self._tool.rd_serdes_regfile()
+                    word = self.rd_regfile(addr)
                     filtered_entries = {key: value for key, value in self.regfile.fields.items() if value['addr'] == addr}
                     for (key, value) in filtered_entries.items():
                         val = word[value['lbit']:value['hbit']+1]
