@@ -519,6 +519,15 @@ class SerdesTool:
     neg_cond = ["ERR", "DOWN", "TESTMODE"]
     ovr_cond = ["OVR"]
 
+    # PFDAC settings
+    ADPLL_PFDAC_TIMER    = 12
+    ADPLL_PFDAC_COR_DLY  = 1
+    ADPLL_PFDAC_CP_MIN   = 6
+    ADPLL_PFDAC_CP_MAX   = 30
+    ADPLL_PFDAC_CP_START = 6
+    ADPLL_PFDAC_CAL_SIGN = 1
+    ADPLL_PFDAC_AUTO_CAL = 1
+
     # Thread-safe lock for updating values
     param_lock = threading.Lock()
 
@@ -704,6 +713,211 @@ class SerdesTool:
                     v = word[value['lbit']:value['hbit']+1]
                     line = f'{key:24} {int(v):4X}\'h {int(v):6}\'d'
                     self.fprint(key, v, line)
+
+    def rd_regfile_pll_status(self):
+        return self.rd_regfile(addr=0x55) + self.rd_regfile(addr=0x56)
+
+    def rd_regfile_pll_bisc_status(self):
+        return self.rd_regfile(addr=0x5A) + self.rd_regfile(addr=0x5B)
+
+    def reset_serdes_trx(self):
+        print('INFO:  Resetting SerDes TX+RX')
+
+        word = self.rd_regfile(addr=0x5C)
+        if (word[0] != 1 or word[2] != 1):
+            print(f'ERROR: SerDes not enabled or in testmode. 0x5C=0x{int(word):04X}')
+
+        # TX reset
+        self.wr_regfile(addr=0x3F, data=0xC000, mask=0xC000) # TX_RESET_OVR=1, TX_RESET=1
+        sleep(2)
+        word = self.rd_regfile(addr=0x41)
+        if (int(word[14]) != 0): # TX_RESET_DONE
+            print(f'ERROR: TX_RESET_DONE != 0')
+
+        self.wr_regfile(addr=0x3F, data=0x4000, mask=0xC000) # TX_RESET_OVR=1, TX_RESET=0
+        word = self.rd_regfile(addr=0x41)
+        timeout = 5
+        while timeout > 0:
+            if (int(word[14]) != 0): # TX_RESET_DONE
+                timeout = timeout - 1
+                if timeout == 0:
+                    print(f'ERROR: TX_RESET_DONE timeout')
+            else:
+                break
+
+        # RX reset
+        self.wr_regfile(addr=0x2B, data=0x0003, mask=0x0003) # RX_RESET_OVR=1, RX_RESET=1
+        sleep(2)
+        word = self.rd_regfile(addr=0x2C)
+        if (int(word[10]) != 0): # RX_RESET_DONE
+            print(f'ERROR: RX_RESET_DONE != 0')
+
+        self.wr_regfile(addr=0x3F, data=0x0001, mask=0x0003) # RX_RESET_OVR=1, RX_RESET=0
+        word = self.rd_regfile(addr=0x2C)
+        timeout = 5
+        while timeout > 0:
+            if (int(word[10]) != 0): # RX_RESET_DONE
+                timeout = timeout - 1
+                if timeout == 0:
+                    print(f'ERROR: RX_RESET_DONE timeout')
+            else:
+                break
+
+    def start_serdes_pll(self, n1=1, n2=2, n3=3, outdiv=4, calib=False):
+        print('INFO:  Configuring SerDes ADPLL')
+
+        if (n1 < 1 or n1 > 2):
+            print(f'ERROR: Main divider N1 is out of range 1..2')
+            return
+        if (n2 < 2 or n2 > 5):
+            print(f'ERROR: Main divider N2 is out of range 2..5')
+            return
+        if (n3 < 3 or n3 > 5):
+            print(f'ERROR: Main divider N3 is out of range 3..5')
+            return
+        if (outdiv != 1 and outdiv != 2 and outdiv != 4):
+            print(f'ERROR: Output divider N3 is limited to 1, 2 or 4')
+            return
+
+        dco = 1000.0 / 10.0 * n1 * n2 * n3
+        freq = dco / outdiv
+        print(f'INFO:  SerDes ADPLL frequency is {freq} MHz')
+
+        print('INFO:  Checking SerDes ADPLL status')
+        status = self.rd_regfile_pll_status()
+        if (status[0] == 1):
+            print('INFO:  Disabling SerDes ADPLL')
+            self.wr_regfile(addr=0x50, data=0x0000, mask=0x0001)
+
+        if outdiv == 1:
+            pll_div = 0x0000
+        elif outdiv == 2:
+            pll_div = 0x1000
+        else:
+            pll_div = 0x3000
+        if n2 == 5:
+            pll_div = (pll_div & ~(0b11 << 6)) | (0b11 << 6)
+        elif n2 == 4:
+            pll_div = (pll_div & ~(0b11 << 6)) | (0b10 << 6)
+        elif n2 == 2:
+            pll_div = (pll_div & ~(0b11 << 6)) | (0b01 << 6)
+        if n1 == 2:
+            pll_div |= (1 << 8)
+        if n3 == 5:
+            pll_div = (pll_div & ~(0b11 << 9)) | (0b11 << 9)
+        elif n3 == 4:
+            pll_div = (pll_div & ~(0b11 << 9)) | (0b10 << 9)
+
+        print('INFO:  Writing SerDes ADPLL divider settings')
+        self.wr_regfile(addr=0x51, data=pll_div, mask=0x3FC0)
+
+        if (calib):
+            print('INFO:  Stopping SerDes ADPLL self-calibration')
+            self.wr_regfile(addr=0x57, data=0x0004, mask=0x0007)
+            self.wr_regfile(addr=0x57, data=
+                ((self.ADPLL_PFDAC_TIMER    & 0x000F) <<  3) |
+                ((self.ADPLL_PFDAC_COR_DLY  & 0x0007) << 10) |
+                ((self.ADPLL_PFDAC_CAL_SIGN & 0x0001) << 13) |
+                ((self.ADPLL_PFDAC_AUTO_CAL & 0x0001) << 14),
+                mask=0xFFF8)
+            self.wr_regfile(addr=0x58, data=
+                ((self.ADPLL_PFDAC_COR_DLY  & 0x001F) << 0) |
+                ((self.ADPLL_PFDAC_CAL_SIGN & 0x001F) << 5) |
+                ((self.ADPLL_PFDAC_AUTO_CAL & 0x001F) << 10),
+                mask=0xFFFF)
+
+        print('INFO:  Starting SerDes ADPLL')
+        self.wr_regfile(addr=0x50, data=0x0002, mask=0x0007)
+        self.wr_regfile(addr=0x50, data=0x0003, mask=0x0003)
+
+        if (calib):
+            print('INFO:  Starting SerDes ADPLL self-calibration')
+            self.wr_regfile(addr=0x57, data=0x0004, mask=0x0007)
+            self.wr_regfile(addr=0x57, data=0x0005, mask=0x0007) # BISC mode B, enable
+
+        timeout = 5
+        while timeout > 0:
+            sleep(0.5)
+            status = self.rd_regfile_pll_status()
+            if (status[0] == 0):
+                timeout = timeout - 1
+                print(f'INFO:  LCK: {int(status[0]):1d} FTO: {int(status[1]):1d} FTU: {int(status[2]):1d} FT: {int(status[3:12+1]):4d} SY: {int(status[16:23+1]):3d} ST: {int(status[13:14+1]):1d}')
+                if timeout == 0:
+                    print(f'ERROR: SerDes ADPLL lock timeout')
+            else:
+                print(f'INFO:  SerDes ADPLL locked')
+                break
+
+        if (calib):
+            result = self.rd_regfile_pll_bisc_status()
+            print(f'INFO:  PFDAC result: max reached: {int(result[0]):1d}, ac_result: {int(result[1:17+1]):6d}, CP: {int(result[18:22+1]):2d}')
+
+        print(f'INFO:  ADPLL status: LCK: {int(status[0]):1d} FTO: {int(status[1]):1d} FTU: {int(status[2]):1d} FT: {int(status[3:12+1]):4d} SY: {int(status[16:23+1]):3d} ST: {int(status[13:14+1]):1d}')
+
+    def tc_prbs(self, force_err=False):
+        print('INFO:  Starting SerDes PRBS testcases')
+
+        word = self.rd_regfile(addr=0x5C)
+        if (word[0] != 1 or word[2] != 1):
+            print(f'ERROR: SerDes not enabled or in testmode. 0x5C=0x{int(word):04X}')
+
+        # set 80-bit datapath
+        self.wr_regfile(addr=0x2A, data=0x000C, mask=0x000C) # RX_DATAPATH_SEL=3
+        self.wr_regfile(addr=0x40, data=0x0018, mask=0x0018) # TX_DATAPATH_SEL=3
+
+        self.start_serdes_pll(n1=1, n2=2, n3=3, outdiv=4, calib=True) # 300 MHz, PFDAC=on
+
+        # check datapath
+        word = self.rd_regfile(addr=0x2A)
+        if (int(word[2:3+1]) != 3):
+            print(f'ERROR: RX_DATAPATH_SEL != 3 ({int(word[2:3+1]):2X})')
+        word = self.rd_regfile(addr=0x40)
+        if (int(word[3:4+1]) != 3):
+            print(f'ERROR: TX_DATAPATH_SEL != 3 ({int(word[3:4+1]):2X})')
+
+        # disable testmode?
+        self.wr_regfile(addr=0x2A, data=0x0210, mask=0x02F0) # RX_PRBS_OVR=1, RX_PRBS_SEL=0, RX_PRBS_CNT_RESET=1
+
+        for i in range(0, 2):
+            prbs = 7 if i == 0 else 15 if i == 1 else 23 if i == 2 else 31 if i == 3 else 0
+            print(f'INFO:  Setting up PRBS-{prbs}')
+
+            self.wr_regfile(addr=0x40, data=((i+1) << 6) | (1 << 5), mask=0x01E0)
+            word = self.rd_regfile(addr=0x40)
+            #if (word[5] == 1):
+            #    print(f'ERROR: TX PRBS overwrite is not disabled')
+            if (int(word[6:8+1]) != i+1):
+                print(f'ERROR: TX PRBS mode is invalid')
+
+            self.wr_regfile(addr=0x2A, data=((i+1) << 5) | (1 << 4), mask=0x00F0) # RX_PRBS_OVR=1, RX_PRBS_SEL=i
+            word = self.rd_regfile(addr=0x2A)
+            #if (word[4] == 1):
+            #    print(f'ERROR: RX PRBS overwrite is not disabled')
+            if (word[9] == 1):
+                print(f'ERROR: RX_PRBS_CNT_RESET is active')
+            if (int(word[5:7+1]) != i+1):
+                print(f'ERROR: RX PRBS mode is invalid')
+
+            # send data
+            sleep(2)
+
+            word = self.rd_regfile(addr=0x1F)
+            print(f'INFO:  RX_PRBS_LOCKED: {int(word[15]):1d}, RX_PRBS_ERR_CNT: {int(word[0:14+1]):X}')
+            if (word[15] == 0):
+                print(f'ERROR: RX PRBS did not lock')
+            if (int(word[0:14+1]) > 0):
+                print(f'ERROR: RX PRBS errors detected ({int(word[0:14+1])})')
+
+            if (force_err):
+                print(f'INFO:  Starting error injection')
+                self.wr_regfile(addr=0x40, data=0x0200, mask=0x0200) # TX_PRBS_FORCE_ERR=1
+                word = self.rd_regfile(addr=0x1F)
+                print(f'INFO:  RX_PRBS_LOCKED: {int(word[15]):1d}, RX_PRBS_ERR_CNT: {int(word[0:14+1]):X}')
+                if (int(word[0:14+1]) == 0):
+                    print(f'ERROR: RX PRBS error detection failed')
+
+            self.wr_regfile(addr=0x2A, data=0x0210, mask=0x02F0) # RX_PRBS_CNT_RESET=1
+        return
 
     def update_values(self):
         while True:
@@ -994,6 +1208,7 @@ if __name__ == '__main__':
         p.add_argument('--rdregtx', dest='rdregtx', action='store_true', help='read tx regfile')
         p.add_argument('--rdregpll', dest='rdregpll', action='store_true', help='read pll regfile')
         p.add_argument('--gui', dest='gui', action='store_true', help='start curses gui')
+        p.add_argument('--tcprbs', dest='tcprbs', action='store_true', help='testcase: prbs')
 
         args = p.parse_args()
         usb  = UsbTools()
@@ -1022,6 +1237,8 @@ if __name__ == '__main__':
             update_thread.start()
             curses.wrapper(s.draw_parameters)
         else:
+            if args.tcprbs:
+                s.tc_prbs(force_err=True)
             if args.rdregrx:
                 s.rd_regfile_rx(verbose=2)
             if args.rdregrxdata:
