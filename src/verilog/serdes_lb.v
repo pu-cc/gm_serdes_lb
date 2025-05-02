@@ -76,7 +76,7 @@ module serdes_lb (
     parameter N1 = 1; // 1/2
     parameter N2 = 2; // 2/3/4/5
     parameter N3 = 3; // 3/4/5
-    parameter OUTDIV = 2; // 1/2/4
+    parameter OUTDIV = 4; // 1/2/4
 
     parameter DATAPATH = 80; // 80, 40, 20
 
@@ -128,6 +128,8 @@ module serdes_lb (
     }; // default: 2'h0;
 
     parameter [14:0] RX_EYE_MEAS_CFG = {11'b0, 3'b0};
+
+    parameter K_POS = 3;
 
     function [63:0] calcTxData(input integer pos, input comma);
     begin
@@ -184,8 +186,8 @@ CC_SERDES #(
     .RX_CDR_RESET_TIME(5'h3),
     .RX_EQA_RESET_TIME(5'h3),
     .RX_PMA_RESET_TIME(5'h3),
-    .RX_WAIT_CDR_LOCK(1'b0), // turn off if loopback
-    .RX_CALIB_EN(1'h0),
+    .RX_WAIT_CDR_LOCK(1'b0), // turn off if loopback enabled
+    .RX_CALIB_EN(1'h1),
     .RX_CALIB_OVR(1'h0),
     .RX_CALIB_VAL(4'h0),
     .RX_RTERM_VCMSEL(3'h4),
@@ -398,14 +400,14 @@ CC_SERDES #(
     .RX_RESET_DONE_O(RX_RESET_DONE_O),
     // TX
     .TX_CLK_I(PLL_CLK_O),
-    .TX_DATA_I({32'h00000000, 8'h00, 16'hCAFE, kChar[27:20]}),
+    .TX_DATA_I(calcTxData(K_POS, 1'b1)),
     .TX_POWER_DOWN_N_I(1'h1),
     .TX_POLARITY_I(1'h0),
     .TX_PRBS_SEL_I(PRBS_SEL),
     .TX_PRBS_FORCE_ERR_I(TX_PRBS_FORCE_ERR_I),
     .TX_8B10B_EN_I(ENABLE_8B10B),
     .TX_8B10B_BYPASS_I(8'h0),
-    .TX_CHAR_IS_K_I(RX_COMMA_DETECT_EN_I ? 8'b0000_0001 : 8'h00),
+    .TX_CHAR_IS_K_I(calcTxK(K_POS, RX_COMMA_DETECT_EN_I)),
     .TX_CHAR_DISPMODE_I(8'h0),
     .TX_CHAR_DISPVAL_I(8'h0),
     .TX_ELEC_IDLE_I(1'h0),
