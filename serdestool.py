@@ -667,18 +667,18 @@ class SerdesTool:
             word = self.rd_regfile(addr)
             if verbose == 1:
                 print(f'{addr:02X}: 0x{int(word):04X}')
-            elif verbose == 2:
-                rx_fields = {
-                    key: field for key, field in self.regfile.fields.items()
-                    if field['addr'] == addr and key.startswith('RX_DATA[')
-                }
-                for field_name, field_info in rx_fields.items():
-                    # Extract the relevant bits from the word
-                    bit_slice = word[field_info['lbit']:field_info['hbit'] + 1]
-                    rx_data_80bit |= int(bit_slice) << (16 * word_idx)
-                    word_idx += 1
+            rx_fields = {
+                key: field for key, field in self.regfile.fields.items()
+                if field['addr'] == addr and key.startswith('RX_DATA[')
+            }
+            for field_name, field_info in rx_fields.items():
+                # Extract the relevant bits from the word
+                bit_slice = word[field_info['lbit']:field_info['hbit'] + 1]
+                rx_data_80bit |= int(bit_slice) << (16 * word_idx)
+                word_idx += 1
 
-        print(f'{"RX_DATA[79:0]":24} {rx_data_80bit:020X}\'h')
+        if verbose == 2:
+            print(f'{"RX_DATA[79:0]":24} {rx_data_80bit:020X}\'h')
 
         # Convert to 64-bit format by packing every 10 bits into bytes
         rx_data_64bit = 0
@@ -688,7 +688,10 @@ class SerdesTool:
             rx_data_64bit |= byte_value << (byte_position * 8)
             byte_position += 1
 
-        print(f'{"RX_DATA[63:0]":24} {rx_data_64bit:016X}\'h')
+        if verbose == 2:
+            print(f'{"RX_DATA[63:0]":24} {rx_data_64bit:016X}\'h')
+
+        return rx_data_64bit
 
     def rd_regfile_tx(self, verbose=0):
         for addr in range(0x30, 0x43): # 0x43..0x4F unused
@@ -919,6 +922,69 @@ class SerdesTool:
             self.wr_regfile(addr=0x2A, data=0x0210, mask=0x02F0) # RX_PRBS_CNT_RESET=1, RX_PRBS_OVR=1, RX_PRBS_SEL=0
             self.wr_regfile(addr=0x40, data=0x0020, mask=0x01E0) # TX_PRBS_OVR=1, TX_PRBS_SEL=0
         return
+
+    def tc_loopback(self):
+        print('INFO:  Starting SerDes loopback testcases')
+
+        word = self.rd_regfile(addr=0x5C)
+        if (word[0] != 1 or word[2] != 1):
+            print(f'ERROR: SerDes not enabled or in testmode. 0x5C=0x{int(word):04X}')
+
+        # testcases:
+        #
+        # 0: TX PMA (Mode 0) >>
+        # 1: TX PMA (Mode 1) >>
+        # 2: TX PMA (Mode 2) >>
+        # 3: TX PCS          >>
+        #
+        # 4: testmode off | TX PMA (Mode 2) >>
+        # 5: testmode off | TX PCS          >>
+
+        for j in range(0, 4):
+            if (j < 3):
+                print(f'INFO:  Enabling TX PMA Loopback (Mode {j:1d})')
+            else:
+                print(f'INFO:  Enabling TX PCS Loopback')
+
+            self.wr_regfile(addr=0x40, data=(0x0400 | (j+1)), mask=0x0407) # TX_LOOPBACK_OVR = 1 | (01, 10, 11)
+            word = self.rd_regfile(addr=0x40)
+            if (word[10] == 0):
+                print(f'ERROR: TX loopback overwrite is not enabled')
+            if (int(word[0:1+1]) != j+1 and j < 3):
+                print(f'ERROR: TX PMA loopback is not enabled')
+            if (word[2] == 0 and j == 3):
+                print(f'ERROR: TX PCS loopback is not enabled')
+
+            # turn tx driver off
+            if (j == 1 or j == 3):
+                self.wr_regfile(addr=0x30, data=0x0000, mask=0x001F) # TODO TX_SEL_PRE=1, TX_SEL_POST=x, TX_AMP=x
+                word = self.rd_regfile(addr=0x30)
+                if (int(word[0:4+1]) != 0):
+                    print(f'ERROR: Invalid TX_SEL_PRE driver setting')
+            else:
+                self.wr_regfile(addr=0x30, data=0x0001, mask=0x001F) # TODO TX_SEL_PRE=1, TX_SEL_POST=x, TX_AMP=x
+                word = self.rd_regfile(addr=0x30)
+                if (int(word[0:4+1]) != 1):
+                    print(f'ERROR: Invalid TX_SEL_PRE driver setting')
+
+            self.start_serdes_pll(n1=1, n2=2, n3=3, outdiv=4, calib=True) # 300 Mbit/s, PFDAC=on
+
+            self.wr_regfile(addr=0x41, data=0x00C0, mask=0x00C0) # TX_8B10B_EN_OVR=1, TX_8B10B_EN=1
+            self.wr_regfile(addr=0x2B, data=0xC000, mask=0xC000) # RX_8B10B_EN_OVR=1, RX_8B10B_EN=1
+
+            self.wr_regfile(addr=0x12, data=0x3000, mask=0x3000) # RX_ALIGN_COMMA_WORD=3 (32 bit)
+
+            self.wr_regfile(addr=0x11, data=0x0C00, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=1
+            self.wr_regfile(addr=0x12, data=0x0C00, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=1
+            self.wr_regfile(addr=0x13, data=0x3000, mask=0x3000) # RX_COMMA_DETECT_EN_OVR=1, RX_COMMA_DETECT_EN=1
+
+            sleep(2)
+
+            self.wr_regfile(addr=0x11, data=0x0000, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=0
+            self.wr_regfile(addr=0x12, data=0x0000, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=0
+
+            print(f'INFO:  Checking 32-/16-/8-Bit comma alignment')
+            print(f'INFO:  RX_DATA[63:0]: {self.rd_regfile_rx_data():016X}\'h')
 
     def update_values(self):
         while True:
@@ -1210,6 +1276,7 @@ if __name__ == '__main__':
         p.add_argument('--rdregpll', dest='rdregpll', action='store_true', help='read pll regfile')
         p.add_argument('--gui', dest='gui', action='store_true', help='start curses gui')
         p.add_argument('--tcprbs', dest='tcprbs', action='store_true', help='testcase: prbs')
+        p.add_argument('--tcloopback', dest='tcloopback', action='store_true', help='testcase: loopback')
 
         args = p.parse_args()
         usb  = UsbTools()
@@ -1240,6 +1307,8 @@ if __name__ == '__main__':
         else:
             if args.tcprbs:
                 s.tc_prbs(force_err=True)
+            if args.tcloopback:
+                s.tc_loopback()
             if args.rdregrx:
                 s.rd_regfile_rx(verbose=2)
             if args.rdregrxdata:

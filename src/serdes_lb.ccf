@@ -6,7 +6,7 @@ NET  "trx_rstn_i"                Loc = "IO_NB_B5" | pullup=true;
 
 NET  "TX_PRBS_FORCE_ERR_I"       Loc = "IO_NB_A0" | pulldown=true;
 NET  "RX_PRBS_CNT_RESET_I"       Loc = "IO_NB_A1" | pulldown=true;
-NET  "RX_COMMA_DETECT_EN_I"      Loc = "IO_NB_A2" | pullup=true;
+#NET  "RX_COMMA_DETECT_EN_I"      Loc = "IO_NB_A2" | pullup=true;
 
 NET  "RX_RESET_DONE_O_N"         Loc = "IO_EB_B1";
 NET  "TX_RESET_DONE_O_N"         Loc = "IO_EB_B2";

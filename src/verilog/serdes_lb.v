@@ -7,7 +7,6 @@ module serdes_lb (
 
     input RX_PRBS_CNT_RESET_I,
     input TX_PRBS_FORCE_ERR_I,
-    input RX_COMMA_DETECT_EN_I,
 
     output [63:0] RX_DATA_O,
     output PLL_CLK_O,
@@ -18,6 +17,8 @@ module serdes_lb (
     output TX_BUF_ERR_O_N, RX_BUF_ERR_O_N,
     output RX_PRBS_ERR_O_N
 );
+
+    wire RX_COMMA_DETECT_EN_I = 1'b1;
 
     // reset
     reg [8:0] rst_cnt = 0;
@@ -129,7 +130,7 @@ module serdes_lb (
 
     parameter [14:0] RX_EYE_MEAS_CFG = {11'b0, 3'b0};
 
-    parameter K_POS = 3;
+    parameter K_POS = 1;
 
     function [63:0] calcTxData(input integer pos, input comma);
     begin
