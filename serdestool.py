@@ -781,7 +781,7 @@ class SerdesTool:
 
         dco = 1000.0 / 10.0 * n1 * n2 * n3
         freq = dco / outdiv
-        print(f'INFO:  SerDes ADPLL frequency is {freq} MHz')
+        print(f'INFO:  SerDes ADPLL frequency / data rate is {freq} MHz / {freq*2} Mbit/s')
 
         print('INFO:  Checking SerDes ADPLL status')
         status = self.rd_regfile_pll_status()
@@ -865,7 +865,7 @@ class SerdesTool:
         self.wr_regfile(addr=0x2A, data=0x000C, mask=0x000C) # RX_DATAPATH_SEL=3
         self.wr_regfile(addr=0x40, data=0x0018, mask=0x0018) # TX_DATAPATH_SEL=3
 
-        self.start_serdes_pll(n1=1, n2=2, n3=3, outdiv=4, calib=True) # 300 MHz, PFDAC=on
+        self.start_serdes_pll(n1=1, n2=5, n3=5, outdiv=4, calib=True) # 1250 Mbit/s, PFDAC=on
 
         # check datapath
         word = self.rd_regfile(addr=0x2A)
@@ -882,7 +882,7 @@ class SerdesTool:
             prbs = 7 if i == 0 else 15 if i == 1 else 23 if i == 2 else 31 if i == 3 else 0
             print(f'INFO:  Setting up PRBS-{prbs}')
 
-            self.wr_regfile(addr=0x40, data=((i+1) << 6) | (1 << 5), mask=0x01E0)
+            self.wr_regfile(addr=0x40, data=((i+1) << 6) | (1 << 5), mask=0x01E0) # TX_PRBS_OVR=1, TX_PRBS_SEL=i
             word = self.rd_regfile(addr=0x40)
             #if (word[5] == 1):
             #    print(f'ERROR: TX PRBS overwrite is not disabled')
@@ -899,7 +899,7 @@ class SerdesTool:
                 print(f'ERROR: RX PRBS mode is invalid')
 
             # send data
-            sleep(2)
+            sleep(5)
 
             word = self.rd_regfile(addr=0x1F)
             print(f'INFO:  RX_PRBS_LOCKED: {int(word[15]):1d}, RX_PRBS_ERR_CNT: {int(word[0:14+1]):X}')
@@ -916,7 +916,8 @@ class SerdesTool:
                 if (int(word[0:14+1]) == 0):
                     print(f'ERROR: RX PRBS error detection failed')
 
-            self.wr_regfile(addr=0x2A, data=0x0210, mask=0x02F0) # RX_PRBS_CNT_RESET=1
+            self.wr_regfile(addr=0x2A, data=0x0210, mask=0x02F0) # RX_PRBS_CNT_RESET=1, RX_PRBS_OVR=1, RX_PRBS_SEL=0
+            self.wr_regfile(addr=0x40, data=0x0020, mask=0x01E0) # TX_PRBS_OVR=1, TX_PRBS_SEL=0
         return
 
     def update_values(self):
