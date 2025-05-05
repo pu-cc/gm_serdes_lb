@@ -975,8 +975,7 @@ class SerdesTool:
 
             self.wr_regfile(addr=0x12, data=0x3000, mask=0x3000) # RX_ALIGN_COMMA_WORD=3 (32 bit)
 
-            #self.wr_regfile_tx_data(data=0x1284A1284A1284A128BC) # 64'h4A4A4A4A_4A4A4ABC
-            #self.wr_regfile_tx_data(data=0x00014A4A4A4A4A4AFABC)
+            self.wr_regfile_tx_data(data=0x1284A1284A1284A128BC) # 64'h4A4A4A4A_4A4A4ABC
 
             self.wr_regfile(addr=0x11, data=0x0C00, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=1
             self.wr_regfile(addr=0x12, data=0x0C00, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=1
