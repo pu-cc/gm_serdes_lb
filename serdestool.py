@@ -693,6 +693,14 @@ class SerdesTool:
 
         return rx_data_64bit
 
+    def wr_regfile_tx_data(self, data, words=4):
+        if (words > 6):
+            print(f'ERROR: Invalid TX DATA word length ({words})')
+        self.wr_regfile(addr=0x41, data=0x1000, mask=0x1F00) # TX_DATA_OVR=1, TX_DATA_CNT=0, TX_DATA_VALID=0
+        for i in range(words):
+            self.wr_regfile(addr=0x42, data=(data >> 16*i) & 0xFFFF, mask=0xFFFF) # auto inc
+        self.wr_regfile(addr=0x41, data=0x1100 | (words << 9), mask=0x1F00) # TX_DATA_OVR=1, TX_DATA_CNT=words, TX_DATA_VALID=1
+
     def rd_regfile_tx(self, verbose=0):
         for addr in range(0x30, 0x43): # 0x43..0x4F unused
             word = self.rd_regfile(addr)
@@ -932,13 +940,13 @@ class SerdesTool:
 
         # testcases:
         #
-        # 0: TX PMA (Mode 0) >>
-        # 1: TX PMA (Mode 1) >>
-        # 2: TX PMA (Mode 2) >>
-        # 3: TX PCS          >>
+        # 0: TX PMA (Mode 0)
+        # 1: TX PMA (Mode 1)
+        # 2: TX PMA (Mode 2)
+        # 3: TX PCS
         #
-        # 4: testmode off | TX PMA (Mode 2) >>
-        # 5: testmode off | TX PCS          >>
+        # 4: testmode off | TX PMA (Mode 2)
+        # 5: testmode off | TX PCS
 
         for j in range(0, 4):
             if (j < 3):
