@@ -130,7 +130,7 @@ module serdes_lb (
 
     parameter [14:0] RX_EYE_MEAS_CFG = {11'b0, 3'b0};
 
-    parameter K_POS = 1;
+    parameter K_POS = 0;
 
     function [63:0] calcTxData(input integer pos, input comma);
     begin
@@ -408,7 +408,8 @@ CC_SERDES #(
     .TX_PRBS_FORCE_ERR_I(TX_PRBS_FORCE_ERR_I),
     .TX_8B10B_EN_I(ENABLE_8B10B),
     .TX_8B10B_BYPASS_I(8'h0),
-    .TX_CHAR_IS_K_I(calcTxK(K_POS, RX_COMMA_DETECT_EN_I)),
+    //.TX_CHAR_IS_K_I(calcTxK(K_POS, RX_COMMA_DETECT_EN_I)),
+    .TX_CHAR_IS_K_I(8'b000_0001),
     .TX_CHAR_DISPMODE_I(8'h0),
     .TX_CHAR_DISPVAL_I(8'h0),
     .TX_ELEC_IDLE_I(1'h0),
