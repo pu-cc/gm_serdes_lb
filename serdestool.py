@@ -660,7 +660,14 @@ class SerdesTool:
                     line = f'{key:24} {int(v):4X}\'h {int(v):6}\'d'
                     self.fprint(key, v, line)
 
-    def rd_regfile_rx_data(self, verbose=0):
+    def rd_regfile_rx_data(self):
+        rxd_80bit = BitSequence()
+        for addr in range(0x20, 0x25):
+            rxd_80bit += self.rd_regfile(addr)
+        rxd_64bit = rxd_80bit[0:7+1] + rxd_80bit[10:17+1] + rxd_80bit[20:27+1] + rxd_80bit[30:37+1] + rxd_80bit[40:47+1] + rxd_80bit[50:57+1] + rxd_80bit[60:67+1] + rxd_80bit[70:77+1]
+        return rxd_64bit, rxd_80bit
+
+    def print_regfile_rx_data(self, verbose=0):
         rx_data_80bit = 0
         word_idx = 0
         for addr in range(0x20, 0x25):
@@ -691,7 +698,7 @@ class SerdesTool:
         if verbose == 2:
             print(f'{"RX_DATA[63:0]":24} {rx_data_64bit:016X}\'h')
 
-        return rx_data_64bit
+        return rx_data_64bit, rx_data_80bit
 
     def wr_regfile_tx_data(self, data):
         self.wr_regfile(addr=0x41, data=0x1000, mask=0x1F00) # TX_DATA_OVR=1, TX_DATA_CNT=0, TX_DATA_VALID=0
@@ -738,7 +745,7 @@ class SerdesTool:
 
         # TX reset
         self.wr_regfile(addr=0x3F, data=0xC000, mask=0xC000) # TX_RESET_OVR=1, TX_RESET=1
-        sleep(2)
+        sleep(1)
         word = self.rd_regfile(addr=0x41)
         if (int(word[14]) != 0): # TX_RESET_DONE
             print(f'ERROR: TX_RESET_DONE != 0')
@@ -756,7 +763,7 @@ class SerdesTool:
 
         # RX reset
         self.wr_regfile(addr=0x2B, data=0x0003, mask=0x0003) # RX_RESET_OVR=1, RX_RESET=1
-        sleep(2)
+        sleep(1)
         word = self.rd_regfile(addr=0x2C)
         if (int(word[10]) != 0): # RX_RESET_DONE
             print(f'ERROR: RX_RESET_DONE != 0')
@@ -792,7 +799,6 @@ class SerdesTool:
         freq = dco / outdiv
         print(f'INFO:  SerDes ADPLL frequency / data rate is {freq} MHz / {freq*2} Mbit/s')
 
-        print('INFO:  Checking SerDes ADPLL status')
         status = self.rd_regfile_pll_status()
         if (status[0] == 1):
             print('INFO:  Disabling SerDes ADPLL')
@@ -864,7 +870,7 @@ class SerdesTool:
         print(f'INFO:  ADPLL status: LCK: {int(status[0]):1d} FTO: {int(status[1]):1d} FTU: {int(status[2]):1d} FT: {int(status[3:12+1]):4d} SY: {int(status[16:23+1]):3d} ST: {int(status[13:14+1]):1d}')
 
     def tc_prbs(self, force_err=False):
-        print('INFO:  Starting SerDes PRBS testcases')
+        print(f'INFO:  Starting SerDes PRBS testcases')
 
         word = self.rd_regfile(addr=0x5C)
         if (word[0] != 1 or word[2] != 1):
@@ -908,6 +914,7 @@ class SerdesTool:
                 print(f'ERROR: RX PRBS mode is invalid')
 
             # send data
+            print(f'INFO:  Sending data (this might take a while) ...')
             sleep(5)
 
             word = self.rd_regfile(addr=0x1F)
@@ -930,7 +937,7 @@ class SerdesTool:
         return
 
     def tc_loopback(self):
-        print('INFO:  Starting SerDes loopback testcases')
+        print(f'INFO:  Starting SerDes loopback testcases')
 
         word = self.rd_regfile(addr=0x5C)
         if (word[0] != 1 or word[2] != 1):
@@ -943,9 +950,9 @@ class SerdesTool:
         # 3: TX PCS (near-end)
         for j in [0, 1, 3]:
             if (j < 3):
-                print(f'INFO:  Enabling TX PMA Loopback (Mode {j:1d})')
+                print(f'\nINFO:  Enabling TX PMA Loopback (Mode {j:1d})')
             else:
-                print(f'INFO:  Enabling TX PCS Loopback')
+                print(f'\nINFO:  Enabling TX PCS Loopback')
 
             # TX_LOOPBACK_OVR=1 | TX_PMA_LOOPBACK=(001=pma-drv, 011=pma-drv, 010=pma-pad, 100=pcs)
             self.wr_regfile(addr=0x40, data=(0x0400 | (j+1) & 0x7), mask=0x0407)
@@ -969,11 +976,13 @@ class SerdesTool:
                 if (int(word[0:4+1]) != 1):
                     print(f'ERROR: Invalid TX_SEL_PRE driver setting')
 
-            self.start_serdes_pll(n1=1, n2=5, n3=5, outdiv=4, calib=True) # 1250 Mbit/s, PFDAC=on
+            self.start_serdes_pll(n1=1, n2=5, n3=5, outdiv=1, calib=True) # 1250 Mbit/s, PFDAC=on
+            #self.reset_serdes_trx()
 
             self.wr_regfile(addr=0x41, data=0x00C0, mask=0x00C0) # TX_8B10B_EN_OVR=1, TX_8B10B_EN=1
             self.wr_regfile(addr=0x2B, data=0xC000, mask=0xC000) # RX_8B10B_EN_OVR=1, RX_8B10B_EN=1
 
+            # 32-Bit comma alignment test
             self.wr_regfile(addr=0x12, data=0x3000, mask=0x3000) # RX_ALIGN_COMMA_WORD=3 (32 bit)
 
             # NOTE: Please define position of the k-word using the `TX_CHAR_IS_K_I` input: set to 8'h0000_0001
@@ -983,13 +992,89 @@ class SerdesTool:
             self.wr_regfile(addr=0x12, data=0x0C00, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=1
             self.wr_regfile(addr=0x13, data=0x3000, mask=0x3000) # RX_COMMA_DETECT_EN_OVR=1, RX_COMMA_DETECT_EN=1
 
+            print(f'INFO:  Sending data (this might take a while) ...')
             sleep(2)
 
             self.wr_regfile(addr=0x11, data=0x0000, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=0
             self.wr_regfile(addr=0x12, data=0x0000, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=0
 
-            print(f'INFO:  Checking 32-/16-/8-Bit comma alignment')
-            print(f'INFO:  RX_DATA[63:0]: {self.rd_regfile_rx_data():016X}\'h')
+            print(f'INFO:  Checking 32-Bit comma alignment')
+            rx_data, _ = self.rd_regfile_rx_data()
+            align_pos = 0 if int(rx_data[0:7+1]) == 0xBC else 1
+            rx_recv = 0x4A4A4A4A4A4A4ABC if align_pos == 0 else 0x4A4A4ABC4A4A4A4A
+
+            if (int(rx_data[0:7+1]) != 0xBC and int(rx_data[32:39+1]) != 0xBC):
+                print(f'ERROR: Comma is not aligned to 32-Bit boundary')
+            if (int(rx_data) != rx_recv):
+                print(f'ERROR: Invalid idle sequence received: RX_DATA[63:0]: {int(rx_data):016X}')
+
+            # 16-Bit comma alignment test
+            self.wr_regfile(addr=0x12, data=0x1000, mask=0x3000) # RX_ALIGN_COMMA_WORD=1 (16 bit)
+
+            # NOTE: Please define position of the k-word using the `TX_CHAR_IS_K_I` input: set to 8'h0000_0001
+            self.wr_regfile_tx_data(data=0x1284A1284A1284A128BC) # 64'h4A4A4A4A_4A4A4ABC
+
+            self.wr_regfile(addr=0x11, data=0x0C00, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=1
+            self.wr_regfile(addr=0x12, data=0x0C00, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=1
+            self.wr_regfile(addr=0x13, data=0x3000, mask=0x3000) # RX_COMMA_DETECT_EN_OVR=1, RX_COMMA_DETECT_EN=1
+
+            print(f'INFO:  Sending data (this might take a while) ...')
+            sleep(2)
+
+            self.wr_regfile(addr=0x11, data=0x0000, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=0
+            self.wr_regfile(addr=0x12, data=0x0000, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=0
+
+            print(f'INFO:  Checking 16-Bit comma alignment')
+            rx_data, _ = self.rd_regfile_rx_data()
+            align_pos = 0 if int(rx_data[  0:7+1]) == 0xBC else \
+                        1 if int(rx_data[16:23+1]) == 0xBC else \
+                        2 if int(rx_data[32:39+1]) == 0xBC else 3
+            rx_recv = 0x4A4A4A4A4A4A4ABC if align_pos == 0 else \
+                      0x4A4A4A4A4ABC4A4A if align_pos == 1 else \
+                      0x4A4A4ABC4A4A4A4A if align_pos == 2 else 0x4ABC4A4A4A4A4A4A
+
+            if (int(rx_data[0:7+1]) != 0xBC and int(rx_data[16:23+1]) != 0xBC and int(rx_data[32:39+1]) != 0xBC and int(rx_data[48:55+1]) != 0xBC):
+                print(f'ERROR: Comma is not aligned to 16-Bit boundary')
+            if (int(rx_data) != rx_recv):
+                print(f'ERROR: Invalid idle sequence received: RX_DATA[63:0]: {int(rx_data):016X}')
+
+            # 8-Bit comma alignment test
+            self.wr_regfile(addr=0x12, data=0x0000, mask=0x3000) # RX_ALIGN_COMMA_WORD=0 (8 bit)
+
+            # NOTE: Please define position of the k-word using the `TX_CHAR_IS_K_I` input: set to 8'h0000_0001
+            self.wr_regfile_tx_data(data=0x1284A1284A1284A128BC) # 64'h4A4A4A4A_4A4A4ABC
+
+            self.wr_regfile(addr=0x11, data=0x0C00, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=1
+            self.wr_regfile(addr=0x12, data=0x0C00, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=1
+            self.wr_regfile(addr=0x13, data=0x3000, mask=0x3000) # RX_COMMA_DETECT_EN_OVR=1, RX_COMMA_DETECT_EN=1
+
+            print(f'INFO:  Sending data (this might take a while) ...')
+            sleep(2)
+
+            self.wr_regfile(addr=0x11, data=0x0000, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=0
+            self.wr_regfile(addr=0x12, data=0x0000, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=0
+
+            print(f'INFO:  Checking 8-Bit comma alignment')
+            rx_data, _ = self.rd_regfile_rx_data()
+            align_pos = 0 if int(rx_data[  0:7+1]) == 0xBC else \
+                        1 if int(rx_data[ 8:15+1]) == 0xBC else \
+                        2 if int(rx_data[16:23+1]) == 0xBC else \
+                        3 if int(rx_data[24:31+1]) == 0xBC else \
+                        4 if int(rx_data[32:39+1]) == 0xBC else \
+                        5 if int(rx_data[40:47+1]) == 0xBC else \
+                        6 if int(rx_data[48:55+1]) == 0xBC else 7
+            rx_recv = 0x4A4A4A4A4A4A4ABC if align_pos == 0 else \
+                      0x4A4A4A4A4A4ABC4A if align_pos == 1 else \
+                      0x4A4A4A4A4ABC4A4A if align_pos == 2 else \
+                      0x4A4A4A4ABC4A4A4A if align_pos == 3 else \
+                      0x4A4A4ABC4A4A4A4A if align_pos == 4 else \
+                      0x4A4ABC4A4A4A4A4A if align_pos == 5 else \
+                      0x4ABC4A4A4A4A4A4A if align_pos == 6 else 0xBC4A4A4A4A4A4A4A
+
+            if (int(rx_data[0:7+1]) != 0xBC and int(rx_data[ 8:15+1]) != 0xBC and int(rx_data[16:23+1]) != 0xBC and int(rx_data[24:31+1]) != 0xBC and int(rx_data[32:39+1]) != 0xBC and int(rx_data[40:47+1]) != 0xBC and int(rx_data[48:55+1]) != 0xBC and int(rx_data[56:63+1]) != 0xBC):
+                print(f'ERROR: Comma is not aligned to 8-Bit boundary')
+            if (int(rx_data) != rx_recv):
+                print(f'ERROR: Invalid idle sequence received: RX_DATA[63:0]: {int(rx_data):016X}')
 
     def update_values(self):
         while True:
@@ -1317,7 +1402,7 @@ if __name__ == '__main__':
             if args.rdregrx:
                 s.rd_regfile_rx(verbose=2)
             if args.rdregrxdata:
-                s.rd_regfile_rx_data(verbose=2)
+                s.print_regfile_rx_data(verbose=2)
             if args.rdregtx:
                 s.rd_regfile_tx(verbose=2)
             if args.rdregpll:
