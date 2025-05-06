@@ -938,16 +938,17 @@ class SerdesTool:
 
         # testcases:
         #
-        # 0: TX PMA (Mode 1)
-        # 2: TX PMA (Mode 2)
-        # 3: TX PCS
-        for j in [0, 2, 3]:
+        # 0: TX PMA (near-end, mode 1: pre-driver), TX_PMA_LOOPBACK=01 or TX_PMA_LOOPBACK=11
+        # 1: TX PMA (near-end, mode 2: pad), TX_PMA_LOOPBACK=10, NOTE: requires termination!
+        # 3: TX PCS (near-end)
+        for j in [0, 1, 3]:
             if (j < 3):
                 print(f'INFO:  Enabling TX PMA Loopback (Mode {j:1d})')
             else:
                 print(f'INFO:  Enabling TX PCS Loopback')
 
-            self.wr_regfile(addr=0x40, data=(0x0400 | (j+1) & 0x7), mask=0x0407) # TX_LOOPBACK_OVR = 1 | (001=pma, 011=pma, 100=pcs)
+            # TX_LOOPBACK_OVR=1 | TX_PMA_LOOPBACK=(001=pma-drv, 011=pma-drv, 010=pma-pad, 100=pcs)
+            self.wr_regfile(addr=0x40, data=(0x0400 | (j+1) & 0x7), mask=0x0407)
             word = self.rd_regfile(addr=0x40)
             if (word[10] == 0):
                 print(f'ERROR: TX loopback overwrite is not enabled')
@@ -968,13 +969,14 @@ class SerdesTool:
                 if (int(word[0:4+1]) != 1):
                     print(f'ERROR: Invalid TX_SEL_PRE driver setting')
 
-            self.start_serdes_pll(n1=1, n2=2, n3=3, outdiv=4, calib=True) # 300 Mbit/s, PFDAC=on
+            self.start_serdes_pll(n1=1, n2=5, n3=5, outdiv=4, calib=True) # 1250 Mbit/s, PFDAC=on
 
             self.wr_regfile(addr=0x41, data=0x00C0, mask=0x00C0) # TX_8B10B_EN_OVR=1, TX_8B10B_EN=1
             self.wr_regfile(addr=0x2B, data=0xC000, mask=0xC000) # RX_8B10B_EN_OVR=1, RX_8B10B_EN=1
 
             self.wr_regfile(addr=0x12, data=0x3000, mask=0x3000) # RX_ALIGN_COMMA_WORD=3 (32 bit)
 
+            # NOTE: Please define position of the k-word using the `TX_CHAR_IS_K_I` input: set to 8'h0000_0001
             self.wr_regfile_tx_data(data=0x1284A1284A1284A128BC) # 64'h4A4A4A4A_4A4A4ABC
 
             self.wr_regfile(addr=0x11, data=0x0C00, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=1
