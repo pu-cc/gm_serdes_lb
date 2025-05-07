@@ -41,6 +41,9 @@ from pyftdi.bits import BitSequence
 Boards_e = ['auto', 'pgm', 'evb']
 ArgEpilog = 'example usage: python3 serdestool.py'
 
+CMD_PATH_b = [0xD9, 0x01, 0xED, 0x96, 0x10, 0x4D, 0xD6, 0x00, 0x33, 0x00]
+CMD_SERDES_TESTMODE_b = [0xD9, 0x01, 0xED, 0x96, 0x10, 0x4D, 0xD6, 0x00, 0x33, 0x00]
+
 class bcolors:
     OK    = '\033[92m' # GREEN
     WARN  = '\033[93m' # YELLOW
@@ -745,16 +748,11 @@ class SerdesTool:
 
         # TX reset
         self.wr_regfile(addr=0x3F, data=0xC000, mask=0xC000) # TX_RESET_OVR=1, TX_RESET=1
-        sleep(1)
-        word = self.rd_regfile(addr=0x41)
-        if (int(word[14]) != 0): # TX_RESET_DONE
-            print(f'ERROR: TX_RESET_DONE != 0')
-
-        self.wr_regfile(addr=0x3F, data=0x4000, mask=0xC000) # TX_RESET_OVR=1, TX_RESET=0
+        self.wr_regfile(addr=0x3F, data=0x0000, mask=0xC000) # TX_RESET_OVR=0, TX_RESET=0
         word = self.rd_regfile(addr=0x41)
         timeout = 5
         while timeout > 0:
-            if (int(word[14]) != 0): # TX_RESET_DONE
+            if (int(word[14]) != 1): # TX_RESET_DONE
                 timeout = timeout - 1
                 if timeout == 0:
                     print(f'ERROR: TX_RESET_DONE timeout')
@@ -763,16 +761,11 @@ class SerdesTool:
 
         # RX reset
         self.wr_regfile(addr=0x2B, data=0x0003, mask=0x0003) # RX_RESET_OVR=1, RX_RESET=1
-        sleep(1)
-        word = self.rd_regfile(addr=0x2C)
-        if (int(word[10]) != 0): # RX_RESET_DONE
-            print(f'ERROR: RX_RESET_DONE != 0')
-
-        self.wr_regfile(addr=0x3F, data=0x0001, mask=0x0003) # RX_RESET_OVR=1, RX_RESET=0
+        self.wr_regfile(addr=0x3F, data=0x0000, mask=0x0003) # RX_RESET_OVR=0, RX_RESET=0
         word = self.rd_regfile(addr=0x2C)
         timeout = 5
         while timeout > 0:
-            if (int(word[10]) != 0): # RX_RESET_DONE
+            if (int(word[10]) != 1): # RX_RESET_DONE
                 timeout = timeout - 1
                 if timeout == 0:
                     print(f'ERROR: RX_RESET_DONE timeout')
@@ -881,6 +874,7 @@ class SerdesTool:
         self.wr_regfile(addr=0x40, data=0x0018, mask=0x0018) # TX_DATAPATH_SEL=3
 
         self.start_serdes_pll(n1=1, n2=5, n3=5, outdiv=4, calib=True) # 1250 Mbit/s, PFDAC=on
+        self.reset_serdes_trx()
 
         # check datapath
         word = self.rd_regfile(addr=0x2A)
@@ -977,7 +971,7 @@ class SerdesTool:
                     print(f'ERROR: Invalid TX_SEL_PRE driver setting')
 
             self.start_serdes_pll(n1=1, n2=5, n3=5, outdiv=1, calib=True) # 1250 Mbit/s, PFDAC=on
-            #self.reset_serdes_trx()
+            self.reset_serdes_trx()
 
             self.wr_regfile(addr=0x41, data=0x00C0, mask=0x00C0) # TX_8B10B_EN_OVR=1, TX_8B10B_EN=1
             self.wr_regfile(addr=0x2B, data=0xC000, mask=0xC000) # RX_8B10B_EN_OVR=1, RX_8B10B_EN=1
@@ -1009,6 +1003,7 @@ class SerdesTool:
                 print(f'ERROR: Invalid idle sequence received: RX_DATA[63:0]: {int(rx_data):016X}')
 
             # 16-Bit comma alignment test
+            self.reset_serdes_trx()
             self.wr_regfile(addr=0x12, data=0x1000, mask=0x3000) # RX_ALIGN_COMMA_WORD=1 (16 bit)
 
             # NOTE: Please define position of the k-word using the `TX_CHAR_IS_K_I` input: set to 8'h0000_0001
@@ -1039,6 +1034,7 @@ class SerdesTool:
                 print(f'ERROR: Invalid idle sequence received: RX_DATA[63:0]: {int(rx_data):016X}')
 
             # 8-Bit comma alignment test
+            self.reset_serdes_trx()
             self.wr_regfile(addr=0x12, data=0x0000, mask=0x3000) # RX_ALIGN_COMMA_WORD=0 (8 bit)
 
             # NOTE: Please define position of the k-word using the `TX_CHAR_IS_K_I` input: set to 8'h0000_0001
