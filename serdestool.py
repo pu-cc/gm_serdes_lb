@@ -42,7 +42,11 @@ Boards_e = ['auto', 'pgm', 'evb']
 ArgEpilog = 'example usage: python3 serdestool.py'
 
 CMD_PATH_b = [0xD9, 0x01, 0xED, 0x96, 0x10, 0x4D, 0xD6, 0x00, 0x33, 0x00]
-CMD_SERDES_TESTMODE_b = [0xD9, 0x01, 0xED, 0x96, 0x10, 0x4D, 0xD6, 0x00, 0x33, 0x00]
+CMD_CFGDONE_b = [0xDB, 0x01, 0x5D, 0xA5, 0x01, 0x45, 0xD7, 0x00, 0x33, 0x00]
+CMD_SERDES_TESTMODE_ON_b =  CMD_PATH_b + [0xD7, 0x02, 0x66, 0x3E, 0x05, 0x00, 0x2A, 0x8C] + CMD_CFGDONE_b
+CMD_SERDES_TESTMODE_OFF_b = CMD_PATH_b + [0xD7, 0x02, 0x66, 0x3E, 0x01, 0x00, 0x4A, 0xEB] + CMD_CFGDONE_b
+
+SER_CLK_PERIOD_NS = 10.0
 
 class bcolors:
     OK    = '\033[92m' # GREEN
@@ -164,6 +168,7 @@ class JtagTool:
             a.append(int(b[i]))
 
         seq = BitSequence(bytes_=a[:-1], msb=False, msby=True)
+        print(seq)
 
         self.write_ir(BitSequence(self.CMD_JTAG_CONFIGURE, msb=True))
         self.write_dr(seq)
@@ -739,8 +744,8 @@ class SerdesTool:
     def rd_regfile_pll_bisc_status(self):
         return self.rd_regfile(addr=0x5A) + self.rd_regfile(addr=0x5B)
 
-    def reset_serdes_trx(self):
-        print('INFO:  Resetting SerDes TX+RX')
+    def reset_serdes_tx(self):
+        print('INFO:  Resetting SerDes TX')
 
         word = self.rd_regfile(addr=0x5C)
         if (word[0] != 1 or word[2] != 1):
@@ -759,6 +764,13 @@ class SerdesTool:
             else:
                 break
 
+    def reset_serdes_rx(self):
+        print('INFO:  Resetting SerDes RX')
+
+        word = self.rd_regfile(addr=0x5C)
+        if (word[0] != 1 or word[2] != 1):
+            print(f'ERROR: SerDes not enabled or in testmode. 0x5C=0x{int(word):04X}')
+
         # RX reset
         self.wr_regfile(addr=0x2B, data=0x0003, mask=0x0003) # RX_RESET_OVR=1, RX_RESET=1
         self.wr_regfile(addr=0x3F, data=0x0000, mask=0x0003) # RX_RESET_OVR=0, RX_RESET=0
@@ -771,6 +783,10 @@ class SerdesTool:
                     print(f'ERROR: RX_RESET_DONE timeout')
             else:
                 break
+
+    def reset_serdes_trx(self):
+        self.reset_serdes_tx()
+        self.reset_serdes_rx()
 
     def start_serdes_pll(self, n1=1, n2=2, n3=3, outdiv=4, calib=False):
         print('INFO:  Configuring SerDes ADPLL')
@@ -788,7 +804,7 @@ class SerdesTool:
             print(f'ERROR: Output divider N3 is limited to 1, 2 or 4')
             return
 
-        dco = 1000.0 / 10.0 * n1 * n2 * n3
+        dco = 1000.0 / SER_CLK_PERIOD_NS * n1 * n2 * n3
         freq = dco / outdiv
         print(f'INFO:  SerDes ADPLL frequency / data rate is {freq} MHz / {freq*2} Mbit/s')
 
@@ -970,7 +986,7 @@ class SerdesTool:
                 if (int(word[0:4+1]) != 1):
                     print(f'ERROR: Invalid TX_SEL_PRE driver setting')
 
-            self.start_serdes_pll(n1=1, n2=5, n3=5, outdiv=1, calib=True) # 1250 Mbit/s, PFDAC=on
+            self.start_serdes_pll(n1=1, n2=5, n3=5, outdiv=4, calib=True) # 1250 Mbit/s, PFDAC=on
             self.reset_serdes_trx()
 
             self.wr_regfile(addr=0x41, data=0x00C0, mask=0x00C0) # TX_8B10B_EN_OVR=1, TX_8B10B_EN=1
@@ -1074,7 +1090,7 @@ class SerdesTool:
 
     def update_values(self):
         while True:
-            sleep(1)  # Update every second
+            sleep(0.5) # 500ms update interval
             with self.param_lock:
                 #for param in self.regfile.fields:
                 #    self.regfile.fields[param]['val'] = random.randint(0, 16)
