@@ -447,8 +447,8 @@ class SerdesTool:
         'PLL_BISC_TIMER_DONE':      {'addr': 0x5A, 'mode': 'R',   'hbit':  0, 'lbit':  0, 'val': 0},
         'PLL_BISC_CP':              {'addr': 0x5A, 'mode': 'R',   'hbit':  7, 'lbit':  1, 'val': 0}, # BISC_RESULT[15:1]
         'PLL_BISC_CO':              {'addr': 0x5B, 'mode': 'R',   'hbit': 15, 'lbit':  0, 'val': 0},
-        'SERDES_ENABLE':            {'addr': 0x5C, 'mode': 'R/W', 'hbit':  0, 'lbit':  0, 'val': 1},
-        'SERDES_AUTO_INIT':         {'addr': 0x5C, 'mode': 'R/W', 'hbit':  1, 'lbit':  1, 'val': 0},
+        'SERDES_ENABLE':            {'addr': 0x5C, 'mode': 'R/C', 'hbit':  0, 'lbit':  0, 'val': 1},
+        'SERDES_AUTO_INIT':         {'addr': 0x5C, 'mode': 'R/C', 'hbit':  1, 'lbit':  1, 'val': 0},
         'SERDES_TESTMODE':          {'addr': 0x5C, 'mode': 'R/C', 'hbit':  2, 'lbit':  2, 'val': 0},
     })
 
@@ -1086,6 +1086,12 @@ class SerdesTool:
                 print(f'ERROR: Comma is not aligned to 8-Bit boundary')
             if (int(rx_data) != rx_recv):
                 print(f'ERROR: Invalid idle sequence received: RX_DATA[63:0]: {int(rx_data):016X}')
+
+    def calc_rxterm_vcm(self, vddio=1.0, vcmsel=None) -> float:
+        if vcmsel is None:
+            vcmsel = self.rd_regfile(addr=0x02)
+            vcmsel = int(vcmsel[11:13+1])
+        return (vcmsel/29) * vddio
 
     def update_values(self):
         while True:
