@@ -41,11 +41,6 @@ from pyftdi.bits import BitSequence
 Boards_e = ['auto', 'pgm', 'evb']
 ArgEpilog = 'example usage: python3 serdestool.py'
 
-CMD_PATH_b = [0xD9, 0x01, 0xED, 0x96, 0x10, 0x4D, 0xD6, 0x00, 0x33, 0x00]
-CMD_CFGDONE_b = [0xDB, 0x01, 0x5D, 0xA5, 0x01, 0x45, 0xD7, 0x00, 0x33, 0x00]
-CMD_SERDES_TESTMODE_ON_b =  CMD_PATH_b + [0xD7, 0x02, 0x66, 0x3E, 0x05, 0x00, 0x2A, 0x8C] + CMD_CFGDONE_b
-CMD_SERDES_TESTMODE_OFF_b = CMD_PATH_b + [0xD7, 0x02, 0x66, 0x3E, 0x01, 0x00, 0x4A, 0xEB] + CMD_CFGDONE_b
-
 SER_CLK_PERIOD_NS = 10.0
 
 class bcolors:
@@ -118,6 +113,7 @@ class JtagTool:
 
     def __init__(self, engine):
         self._engine = engine
+        self.idcode()
 
     def write_ir(self, instruction) -> None:
         byp_before = BitSequence('1'*6*self.taps_before, msb=True)
@@ -148,7 +144,7 @@ class JtagTool:
             chunk_data = self.get_chunk(int(idcodes), i, 32)
             if chunk_data != 0:
                 chain_len += 1
-        print(f'Found {chain_len} device{"s" if chain_len > 1 else ""} in JTAG chain.')
+        print(f'INFO:  Found {chain_len} device{"s" if chain_len > 1 else ""} in JTAG chain.')
         self.taps_before = chain_len - self.chain_idx - 1
         return chain_len
 
@@ -160,15 +156,14 @@ class JtagTool:
         return int(status)
 
     # Configure FPGA using CMD_JTAG_CONFIGURE
-    def wr_cfg(self, cfg_data) -> None:
+    def wr_cfg(self, cfg_data):
         a = []
         b = bytearray(cfg_data)
 
         for i in range(len(b)):
             a.append(int(b[i]))
 
-        seq = BitSequence(bytes_=a[:-1], msb=False, msby=True)
-        print(seq)
+        seq = BitSequence(bytes_=a[:-1], length=len(b)*8, msb=False, msby=True)
 
         self.write_ir(BitSequence(self.CMD_JTAG_CONFIGURE, msb=True))
         self.write_dr(seq)
@@ -750,6 +745,7 @@ class SerdesTool:
         word = self.rd_regfile(addr=0x5C)
         if (word[0] != 1 or word[2] != 1):
             print(f'ERROR: SerDes not enabled or in testmode. 0x5C=0x{int(word):04X}')
+            return
 
         # TX reset
         self.wr_regfile(addr=0x3F, data=0xC000, mask=0xC000) # TX_RESET_OVR=1, TX_RESET=1
@@ -770,6 +766,7 @@ class SerdesTool:
         word = self.rd_regfile(addr=0x5C)
         if (word[0] != 1 or word[2] != 1):
             print(f'ERROR: SerDes not enabled or in testmode. 0x5C=0x{int(word):04X}')
+            return
 
         # RX reset
         self.wr_regfile(addr=0x2B, data=0x0003, mask=0x0003) # RX_RESET_OVR=1, RX_RESET=1
@@ -884,6 +881,7 @@ class SerdesTool:
         word = self.rd_regfile(addr=0x5C)
         if (word[0] != 1 or word[2] != 1):
             print(f'ERROR: SerDes not enabled or in testmode. 0x5C=0x{int(word):04X}')
+            return
 
         # set 80-bit datapath
         self.wr_regfile(addr=0x2A, data=0x000C, mask=0x000C) # RX_DATAPATH_SEL=3
@@ -952,6 +950,7 @@ class SerdesTool:
         word = self.rd_regfile(addr=0x5C)
         if (word[0] != 1 or word[2] != 1):
             print(f'ERROR: SerDes not enabled or in testmode. 0x5C=0x{int(word):04X}')
+            return
 
         # testcases:
         #
