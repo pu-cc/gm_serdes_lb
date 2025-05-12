@@ -948,6 +948,54 @@ class SerdesTool:
             self.wr_regfile(addr=0x40, data=0x0020, mask=0x01E0) # TX_PRBS_OVR=1, TX_PRBS_SEL=0
         return
 
+    def tc_uipattern(self, mode=0):
+        print(f'INFO:  Starting SerDes UI pattern testcase')
+
+        if not mode in [0,2,20,40,80]:
+            print(f'ERROR: Invalid UI pattern mode ({mode}), must be in [0,2,20,40,80]')
+            return
+
+        word = self.rd_regfile(addr=0x5C)
+        if (word[0] != 1 or word[2] != 1):
+            print(f'ERROR: SerDes not enabled or in testmode. 0x5C=0x{int(word):04X}')
+            return
+
+        # set datapath if mode in [20,40,80]
+        datapath_sel = 0
+        if mode == 20:
+            self.wr_regfile(addr=0x2A, data=0x0000, mask=0x000C) # RX_DATAPATH_SEL=0
+            self.wr_regfile(addr=0x40, data=0x0000, mask=0x0018) # TX_DATAPATH_SEL=0 (16/20)
+        elif mode == 40:
+            datapath_sel = 1
+            self.wr_regfile(addr=0x2A, data=0x0001, mask=0x000C) # RX_DATAPATH_SEL=1
+            self.wr_regfile(addr=0x40, data=0x0008, mask=0x0018) # TX_DATAPATH_SEL=1 (32/40)
+        elif mode == 2 or mode == 80:
+            datapath_sel = 3
+            self.wr_regfile(addr=0x2A, data=0x000C, mask=0x000C) # RX_DATAPATH_SEL=3
+            self.wr_regfile(addr=0x40, data=0x0018, mask=0x0018) # TX_DATAPATH_SEL=3 (64/80)
+
+        self.start_serdes_pll(n1=1, n2=2, n3=3, outdiv=4, calib=True) # 300 Mbit/s, PFDAC=on
+        self.reset_serdes_trx()
+
+        # check datapath
+        word = self.rd_regfile(addr=0x2A)
+        if (int(word[2:3+1]) != 3):
+            print(f'ERROR: RX_DATAPATH_SEL != 3 ({int(word[2:3+1]):2X})')
+        word = self.rd_regfile(addr=0x40)
+        if (int(word[3:4+1]) != datapath_sel):
+            print(f'ERROR: TX_DATAPATH_SEL != {datapath_sel} ({int(word[3:4+1]):2X})')
+
+        # disable testmode?
+        self.wr_regfile(addr=0x2A, data=0x0210, mask=0x02F0) # RX_PRBS_OVR=1, RX_PRBS_SEL=0, RX_PRBS_CNT_RESET=1
+
+        print(f'INFO:  Setting up {mode} UI square wave')
+
+        i = 5 if mode == 2 else 6 if mode in [20,40,80] else 0
+        self.wr_regfile(adqdr=0x40, data=((i+1) << 6) | (1 << 5), mask=0x01E0) # TX_PRBS_OVR=1, TX_PRBS_SEL=i
+        word = self.rd_regfile(addr=0x40)
+        if (int(word[6:8+1]) != i+1):
+            print(f'ERROR: TX PRBS mode is invalid')
+
     def tc_loopback(self):
         print(f'INFO:  Starting SerDes loopback testcases')
 
@@ -979,7 +1027,7 @@ class SerdesTool:
 
             # turn tx driver off
             if (j == 1 or j == 3):
-                self.wr_regfile(addr=0x30, data=0x0000, mask=0x001F) # TODO TX_SEL_PRE=1, TX_SEL_POST=x, TX_AMP=x
+                self.wr_regfile(addr=0x30, data=0x0000, mask=0x001F) # TODO TX_SEL_PRE=0, TX_SEL_POST=x, TX_AMP=x
                 word = self.rd_regfile(addr=0x30)
                 if (int(word[0:4+1]) != 0):
                     print(f'ERROR: Invalid TX_SEL_PRE driver setting')
@@ -1388,6 +1436,7 @@ if __name__ == '__main__':
         p.add_argument('--gui', dest='gui', action='store_true', help='start curses gui')
         p.add_argument('--tcprbs', dest='tcprbs', action='store_true', help='testcase: prbs')
         p.add_argument('--tcloopback', dest='tcloopback', action='store_true', help='testcase: loopback')
+        p.add_argument('--tcuipattern', dest='tcuipattern', choices=['0','2','20','40','80'], default=None, required=False, help='testcase: 2,20,40,80 UI square wave pattern')
 
         args = p.parse_args()
         usb  = UsbTools()
@@ -1420,6 +1469,8 @@ if __name__ == '__main__':
                 s.tc_prbs(force_err=True)
             if args.tcloopback:
                 s.tc_loopback()
+            if args.tcuipattern is not None:
+                s.tc_uipattern(int(args.tcuipattern))
             if args.rdregrx:
                 s.rd_regfile_rx(verbose=2)
             if args.rdregrxdata:
