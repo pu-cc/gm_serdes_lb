@@ -991,7 +991,7 @@ class SerdesTool:
         print(f'INFO:  Setting up {mode} UI square wave')
 
         i = 5 if mode == 2 else 6 if mode in [20,40,80] else 0
-        self.wr_regfile(adqdr=0x40, data=((i+1) << 6) | (1 << 5), mask=0x01E0) # TX_PRBS_OVR=1, TX_PRBS_SEL=i
+        self.wr_regfile(addr=0x40, data=((i+1) << 6) | (1 << 5), mask=0x01E0) # TX_PRBS_OVR=1, TX_PRBS_SEL=i
         word = self.rd_regfile(addr=0x40)
         if (int(word[6:8+1]) != i+1):
             print(f'ERROR: TX PRBS mode is invalid')
