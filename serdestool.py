@@ -108,29 +108,30 @@ class JtagTool:
     CMD_JTAG_WR_SERDES_REGFILE = '100101' # 0x25
     CMD_JTAG_RD_SERDES_REGFILE = '100110' # 0x26
 
-    chain_idx = 0
-    taps_before = 0
+    _chain_idx = 0
+    _taps_before = 0
 
     def __init__(self, engine):
         self._engine = engine
+        self._chain_idx = args.idx
         self.idcode()
 
     def write_ir(self, instruction) -> None:
-        byp_before = BitSequence('1'*6*self.taps_before, msb=True)
-        byp_after = BitSequence('1'*6*self.chain_idx, msb=True)
+        byp_before = BitSequence('1'*6*self._taps_before, msb=True)
+        byp_after = BitSequence('1'*6*self._chain_idx, msb=True)
         self._engine.write_ir(byp_before+instruction+byp_after)
 
     def write_dr(self, data) -> None:
-        byp_before = BitSequence('0'*self.taps_before, msb=True)
-        byp_after = BitSequence('0'*self.chain_idx, msb=True)
+        byp_before = BitSequence('0'*self._taps_before, msb=True)
+        byp_after = BitSequence('0'*self._chain_idx, msb=True)
         self._engine.write_dr(byp_after+data+byp_before)
 
     def read_dr(self, length: int) -> BitSequence:
-        word = self._engine.read_dr(length+self.taps_before)
-        if self.chain_idx > 0:
-            return word[self.taps_before:-self.chain_idx]
+        word = self._engine.read_dr(length+self._taps_before)
+        if self._chain_idx > 0:
+            return word[self._taps_before:-self._chain_idx]
         else:
-            return word[self.taps_before:]
+            return word[self._taps_before:]
 
     def get_chunk(self, data, start, length):
         return (data >> start) & ((1 << length) - 1)
@@ -145,7 +146,7 @@ class JtagTool:
             if chunk_data != 0:
                 chain_len += 1
         print(f'INFO:  Found {chain_len} device{"s" if chain_len > 1 else ""} in JTAG chain.')
-        self.taps_before = chain_len - self.chain_idx - 1
+        self._taps_before = chain_len - self._chain_idx - 1
         return chain_len
 
     # Read the IDCODE using CMD_JTAG_ID
@@ -923,7 +924,10 @@ class SerdesTool:
 
             # send data
             print(f'INFO:  Sending data (this might take a while) ...')
-            sleep(5)
+            n = 10
+            for i in range(n):
+                print(f'INFO:  {i}/{n}')
+                sleep(1)
 
             word = self.rd_regfile(addr=0x1F)
             print(f'INFO:  RX_PRBS_LOCKED: {int(word[15]):1d}, RX_PRBS_ERR_CNT: {int(word[0:14+1]):X}')
