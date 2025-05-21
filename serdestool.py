@@ -734,6 +734,16 @@ class SerdesTool:
                     line = f'{key:24} {int(v):4X}\'h {int(v):6}\'d'
                     self.fprint(key, v, line)
 
+    def rd_regfile_pll_div_settings(self):
+        word = self.rd_regfile(addr=0x51)
+        FCNTRL = word[0:5+1]
+        MAIN_DIVSEL = word[6:11+1]
+        OUT_DIVSEL = word[12:13+1]
+        n1 = MAIN_DIVSEL[2]
+        n2 = MAIN_DIVSEL[0:1+1]
+        n3 = MAIN_DIVSEL[3:4+1]
+        return n1, n2, n3, OUT_DIVSEL
+
     def rd_regfile_pll_status(self):
         return self.rd_regfile(addr=0x55) + self.rd_regfile(addr=0x56)
 
@@ -760,6 +770,30 @@ class SerdesTool:
                     print(f'ERROR: TX_RESET_DONE timeout')
             else:
                 break
+
+    def set_serdes_datapath(self, mode=80):
+        if mode == 0 or mode == 20:
+            self.wr_regfile(addr=0x2A, data=0x0000, mask=0x000C) # RX_DATAPATH_SEL=0
+            self.wr_regfile(addr=0x40, data=0x0000, mask=0x0018) # TX_DATAPATH_SEL=0 (16/20)
+        elif mode == 1 or mode == 40:
+            datapath_sel = 1
+            self.wr_regfile(addr=0x2A, data=0x0001, mask=0x000C) # RX_DATAPATH_SEL=1
+            self.wr_regfile(addr=0x40, data=0x0008, mask=0x0018) # TX_DATAPATH_SEL=1 (32/40)
+        elif mode == 2 or mode == 3 or mode == 80:
+            datapath_sel = 3
+            self.wr_regfile(addr=0x2A, data=0x000C, mask=0x000C) # RX_DATAPATH_SEL=3
+            self.wr_regfile(addr=0x40, data=0x0018, mask=0x0018) # TX_DATAPATH_SEL=3 (64/80)
+        else:
+            print(f'ERROR: Invalid datapath configruation {mode}')
+
+    def check_serdes_datapath(self, mode):
+        check = 3 if mode == 80 else 1 if mode == 40 else 0 if mode == 20 else mode
+        word = self.rd_regfile(addr=0x2A)
+        if (int(word[2:3+1]) != check):
+            print(f'ERROR: RX_DATAPATH_SEL != {check} ({int(word[2:3+1]):2X})')
+        word = self.rd_regfile(addr=0x40)
+        if (int(word[3:4+1]) != check):
+            print(f'ERROR: TX_DATAPATH_SEL != {check} ({int(word[3:4+1]):2X})')
 
     def reset_serdes_rx(self):
         print('INFO:  Resetting SerDes RX')
@@ -885,19 +919,13 @@ class SerdesTool:
             return
 
         # set 80-bit datapath
-        self.wr_regfile(addr=0x2A, data=0x000C, mask=0x000C) # RX_DATAPATH_SEL=3
-        self.wr_regfile(addr=0x40, data=0x0018, mask=0x0018) # TX_DATAPATH_SEL=3
+        self.set_serdes_datapath(80)
 
         self.start_serdes_pll(n1=1, n2=5, n3=5, outdiv=4, calib=True) # 1250 Mbit/s, PFDAC=on
         self.reset_serdes_trx()
 
         # check datapath
-        word = self.rd_regfile(addr=0x2A)
-        if (int(word[2:3+1]) != 3):
-            print(f'ERROR: RX_DATAPATH_SEL != 3 ({int(word[2:3+1]):2X})')
-        word = self.rd_regfile(addr=0x40)
-        if (int(word[3:4+1]) != 3):
-            print(f'ERROR: TX_DATAPATH_SEL != 3 ({int(word[3:4+1]):2X})')
+        self.check_serdes_datapath(80)
 
         # disable testmode?
         self.wr_regfile(addr=0x2A, data=0x0210, mask=0x02F0) # RX_PRBS_OVR=1, RX_PRBS_SEL=0, RX_PRBS_CNT_RESET=1
@@ -961,29 +989,13 @@ class SerdesTool:
             return
 
         # set datapath if mode in [20,40,80]
-        datapath_sel = 0
-        if mode == 20:
-            self.wr_regfile(addr=0x2A, data=0x0000, mask=0x000C) # RX_DATAPATH_SEL=0
-            self.wr_regfile(addr=0x40, data=0x0000, mask=0x0018) # TX_DATAPATH_SEL=0 (16/20)
-        elif mode == 40:
-            datapath_sel = 1
-            self.wr_regfile(addr=0x2A, data=0x0001, mask=0x000C) # RX_DATAPATH_SEL=1
-            self.wr_regfile(addr=0x40, data=0x0008, mask=0x0018) # TX_DATAPATH_SEL=1 (32/40)
-        elif mode == 2 or mode == 80:
-            datapath_sel = 3
-            self.wr_regfile(addr=0x2A, data=0x000C, mask=0x000C) # RX_DATAPATH_SEL=3
-            self.wr_regfile(addr=0x40, data=0x0018, mask=0x0018) # TX_DATAPATH_SEL=3 (64/80)
+        self.set_serdes_datapath(mode)
 
         self.start_serdes_pll(n1=1, n2=2, n3=3, outdiv=4, calib=True) # 300 Mbit/s, PFDAC=on
         self.reset_serdes_trx()
 
         # check datapath
-        word = self.rd_regfile(addr=0x2A)
-        if (int(word[2:3+1]) != 3):
-            print(f'ERROR: RX_DATAPATH_SEL != 3 ({int(word[2:3+1]):2X})')
-        word = self.rd_regfile(addr=0x40)
-        if (int(word[3:4+1]) != datapath_sel):
-            print(f'ERROR: TX_DATAPATH_SEL != {datapath_sel} ({int(word[3:4+1]):2X})')
+        self.check_serdes_datapath(mode)
 
         # disable testmode?
         self.wr_regfile(addr=0x2A, data=0x0210, mask=0x02F0) # RX_PRBS_OVR=1, RX_PRBS_SEL=0, RX_PRBS_CNT_RESET=1
@@ -1028,14 +1040,22 @@ class SerdesTool:
             # turn tx driver off
             if (j == 1 or j == 3):
                 self.wr_regfile(addr=0x30, data=0x0000, mask=0x001F) # TODO TX_SEL_PRE=0, TX_SEL_POST=x, TX_AMP=x
+                self.wr_regfile(addr=0x31, data=0x07E0, mask=0x07E0) # TX_BRANCH_EN_MAIN=63
                 word = self.rd_regfile(addr=0x30)
                 if (int(word[0:4+1]) != 0):
                     print(f'ERROR: Invalid TX_SEL_PRE driver setting')
+                word = self.rd_regfile(addr=0x31)
+                if (int(word[5:10+1]) != 63):
+                    print(f'ERROR: Invalid TX_BRANCH_EN_MAIN setting')
             else:
                 self.wr_regfile(addr=0x30, data=0x0001, mask=0x001F) # TODO TX_SEL_PRE=1, TX_SEL_POST=x, TX_AMP=x
+                self.wr_regfile(addr=0x31, data=0x0000, mask=0x07E0) # TX_BRANCH_EN_MAIN=0
                 word = self.rd_regfile(addr=0x30)
                 if (int(word[0:4+1]) != 1):
                     print(f'ERROR: Invalid TX_SEL_PRE driver setting')
+                word = self.rd_regfile(addr=0x31)
+                if (int(word[5:10+1]) != 0):
+                    print(f'ERROR: Invalid TX_BRANCH_EN_MAIN setting')
 
             self.start_serdes_pll(n1=1, n2=5, n3=5, outdiv=4, calib=True) # 1250 Mbit/s, PFDAC=on
             self.reset_serdes_trx()
