@@ -518,6 +518,26 @@ class SerdesTool:
         'REGFILE_RDY_O': 1
     }
 
+    olclkg = { # open loop clock generator
+        # fcntrl : N
+         0:    1,  1:     2,  2:    3,  3:  3.5,
+         4:  3.5,  5:  3.75,  6:    4,  7:    4,
+         8:  4.5,  9:  5.25, 10: 5.25, 11:  5.5,
+        12:  5.5, 13:  5.75, 14:    6, 15:    6,
+        16:    6, 17:     7, 18:    6, 19:    7,
+        20:    7, 21:   7.5, 22:    8, 23:    8,
+        24:    9, 25:  10.5, 26:   10, 27:   11,
+        28:   11, 29:  11.5, 30:   12, 31:   12,
+        32:    9, 33:  10.5, 34:    9, 35: 10.5,
+        36: 10.5, 37: 11.25, 38:   12, 39:   12,
+        40: 13.5, 41: 15.75, 42:   15, 43: 16.5,
+        44: 16.5, 45: 17.25, 46:   18, 47:   18,
+        48:   12, 49:    14, 50:   12, 51:   14,
+        52:   14, 53: 15.75, 54: 16.5, 55: 16.5,
+        56:   18, 57:    21, 58:   20, 59:   22,
+        60:   22, 61:    23, 62:   24, 63:   24,
+    }
+
     # keywords for conditional coloring
     pos_cond = ["DONE", "PRESENT", "LOCKED", "IS_ALIGNED", "EN_ADPLL_CTRL", "CONFIG_SEL", "SERDES_ENABLE"]
     neg_cond = ["ERR", "DOWN", "TESTMODE"]
@@ -1008,6 +1028,14 @@ class SerdesTool:
         if (int(word[6:8+1]) != i+1):
             print(f'ERROR: TX PRBS mode is invalid')
 
+    def tc_eyemeas(self):
+        print(f'INFO:  Starting SerDes eye measurement')
+
+        word = self.rd_regfile(addr=0x5C)
+        if (word[0] != 1 or word[2] != 1):
+            print(f'ERROR: SerDes not enabled or in testmode. 0x5C=0x{int(word):04X}')
+            return
+
     def tc_loopback(self):
         print(f'INFO:  Starting SerDes loopback testcases')
 
@@ -1233,10 +1261,11 @@ class SerdesTool:
             else:
                 AddDiv = {0b00: 1, 0b01: 2, 0b11: 4}.get(PLL_OUT_DIVSEL, None)
 
-            data_path_clock = (100e6 * N1 * N2 * N3) / (20 * AddDiv) if None not in (N1, N2, N3, OUTDIV, AddDiv) else None
+            PLL_FCNTRL = self.regfile.fields.get("PLL_FCNTRL", {}).get("val", 0x0)
+            data_path_clock = (100e6 * N1 * N2 * N3) / (self.olclkg[PLL_FCNTRL] * AddDiv) if None not in (N1, N2, N3, OUTDIV, AddDiv) else None
 
             bit_rate_str = f"Bit Rate Clock: {bit_rate_clock / 1e6:.2f} MHz" if bit_rate_clock else "Invalid PLL Config"
-            data_path_str = f"Data Path Clock: {data_path_clock / 1e6:.2f} MHz {is_64_bit}" if data_path_clock else "Invalid Data Path Config"
+            data_path_str = f"Data Path Clock: {data_path_clock / 1e6:.2f} MHz" if data_path_clock else "Invalid Data Path Config"
 
             stdscr.clear()
             stdscr.addstr(0, 2, " FPGA SerDes Parameters (Auto-Update Enabled) ", curses.A_BOLD | curses.A_REVERSE)
