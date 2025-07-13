@@ -95,7 +95,7 @@ class ColorFormatter:
 
         if any(cond in key for cond in ColorFormatter.pos_cond):
             return 1 if value != 0 else 2  # Green for positive, Yellow for zero
-        elif any(cond in key for cond in ColorFormatter.neg_cond):
+        elif any(cond in key for cond in ColorFormatter.neg_cond) and not any(cond in key for cond in ColorFormatter.ovr_cond):
             return 3 if (value < 1 if key.endswith('_N') else value > 0) else 0  # Red for errors
         elif any(cond in key for cond in ColorFormatter.ovr_cond) and value > 0:
             return 4  # Blue for "OVR" values
@@ -107,6 +107,11 @@ class JtagTool:
     CMD_JTAG_CONFIGURE         = '000110' # 0x06
     CMD_JTAG_WR_SERDES_REGFILE = '100101' # 0x25
     CMD_JTAG_RD_SERDES_REGFILE = '100110' # 0x26
+
+    CMD_JTAG_STATUS_PLL0       = '011100' # 0x1C
+    CMD_JTAG_STATUS_PLL1       = '011101' # 0x1D
+    CMD_JTAG_STATUS_PLL2       = '011110' # 0x1E
+    CMD_JTAG_STATUS_PLL3       = '011111' # 0x1F
 
     _chain_idx = 0
     _taps_before = 0
@@ -184,6 +189,49 @@ class JtagTool:
         word = self.read_dr(16)
         self._engine.go_idle()
         return word
+
+    def rd_status_pll(self, device=1, pll=0, verbose=0):
+        bs = BitSequence()
+        if pll == 0:
+            bs += BitSequence(self.CMD_JTAG_STATUS_PLL0, msb=True)
+        elif pll == 1:
+            bs += BitSequence(self.CMD_JTAG_STATUS_PLL1, msb=True)
+        elif pll == 2:
+            bs += BitSequence(self.CMD_JTAG_STATUS_PLL2, msb=True)
+        elif pll == 3:
+            bs += BitSequence(self.CMD_JTAG_STATUS_PLL3, msb=True)
+        else:
+            raise JtagError("Invalid PLL number: %s" % pll)
+            return 0
+        self._engine.write_ir(bs)
+        status = self._engine.read_dr(17)
+        self._engine.go_idle()
+
+        pll_status_bin = '{:017b}'.format(int(status))
+        if verbose:
+            print('pll{}: 0x{:05X}'.format(pll, int(status)))
+            print('pll%d: 0b%s' %(pll, pll_status_bin))
+
+            #     0: fine tune overflow flag
+            #     1: fine tune underflow flag
+            # 11: 2: fine tune value
+            # 13:12: state
+            # 16:14: coarse tune value
+            print('pll%d: fine tune overflow flag : %s ' %(pll, pll_status_bin[-1]))
+            print('pll%d: fine tune underflow flag : %s ' %(pll, pll_status_bin[-2]))
+            print('pll%d: fine tune value : %s ' %(pll, pll_status_bin[-12:-2]))
+
+            #S_IDLE = ‘d0; S_LOCK_IN = ‘d1; S_LOCKED = ‘d2; S_FAST_LOCK = ‘d3;
+            if pll_status_bin[-14:-12] == '00':
+                print('pll%d: state : %s  -> S_IDLE' %(pll, pll_status_bin[-14:-12]))
+            elif pll_status_bin[-14:-12] == '01':
+                print('pll%d: state : %s  -> S_LOCK_IN' %(pll, pll_status_bin[-14:-12]))
+            elif pll_status_bin[-14:-12] == '10':
+                print('pll%d: state : %s  -> S_LOCKED' %(pll, pll_status_bin[-14:-12]))
+            elif pll_status_bin[-14:-12] == '11':
+                print('pll%d: state : %s  -> S_FAST_LOCK' %(pll, pll_status_bin[-14:-12]))
+            print('pll%d: coarse tune value : %s ' %(pll, pll_status_bin[-17:-14]))
+        return (pll_status_bin[-14:-12] == '10') # locked
 
 class SerdesRegfile:
     def __init__(self, initial_fields):
@@ -522,7 +570,7 @@ class SerdesTool:
         # fcntrl : N
          0:    1,  1:     2,  2:    3,  3:  3.5,
          4:  3.5,  5:  3.75,  6:    4,  7:    4,
-         8:  4.5,  9:  5.25, 10: 5.25, 11:  5.5,
+         8:  4.5,  9:  5.25, 10:    5, 11:  5.5,
         12:  5.5, 13:  5.75, 14:    6, 15:    6,
         16:    6, 17:     7, 18:    6, 19:    7,
         20:    7, 21:   7.5, 22:    8, 23:    8,
@@ -1265,7 +1313,7 @@ class SerdesTool:
             data_path_clock = (100e6 * N1 * N2 * N3) / (self.olclkg[PLL_FCNTRL] * AddDiv) if None not in (N1, N2, N3, OUTDIV, AddDiv) else None
 
             bit_rate_str = f"Bit Rate Clock: {bit_rate_clock / 1e6:.2f} MHz" if bit_rate_clock else "Invalid PLL Config"
-            data_path_str = f"Data Path Clock: {data_path_clock / 1e6:.2f} MHz" if data_path_clock else "Invalid Data Path Config"
+            data_path_str = f"TX Data Path Clock: {data_path_clock / 1e6:.2f} MHz" if data_path_clock else "Invalid Data Path Config"
 
             stdscr.clear()
             stdscr.addstr(0, 2, " FPGA SerDes Parameters (Auto-Update Enabled) ", curses.A_BOLD | curses.A_REVERSE)
@@ -1482,6 +1530,7 @@ if __name__ == '__main__':
         p.add_argument('--rdregrxdata', dest='rdregrxdata', action='store_true', help='read rx data')
         p.add_argument('--rdregtx', dest='rdregtx', action='store_true', help='read tx regfile')
         p.add_argument('--rdregpll', dest='rdregpll', action='store_true', help='read pll regfile')
+        p.add_argument('--rdstatuspll', dest='rdstatuspll', action='store_true', help='read pll status registers')
         p.add_argument('--gui', dest='gui', action='store_true', help='start curses gui')
         p.add_argument('--tcprbs', dest='tcprbs', action='store_true', help='testcase: prbs')
         p.add_argument('--tcloopback', dest='tcloopback', action='store_true', help='testcase: loopback')
@@ -1528,6 +1577,8 @@ if __name__ == '__main__':
                 s.rd_regfile_tx(verbose=2)
             if args.rdregpll:
                 s.rd_regfile_pll(verbose=2)
+            if args.rdstatuspll:
+                [s._tool.rd_status_pll(pll=i, verbose=1) for i in range(4)]
 
     except Exception as e:
         print(e)
