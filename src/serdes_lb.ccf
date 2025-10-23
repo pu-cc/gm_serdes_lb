@@ -1,12 +1,13 @@
 ## serdes_lb.ccf
 
 NET  "ref_clk"                   Loc = "IO_SB_A8" | schmitt_trigger=true;
+
 NET  "pll_rstn_i"                Loc = "IO_EB_B0" | pullup=true;
 NET  "trx_rstn_i"                Loc = "IO_NB_B5" | pullup=true;
 
-NET  "TX_PRBS_FORCE_ERR_I"       Loc = "IO_NB_A0" | pulldown=true;
-NET  "RX_PRBS_CNT_RESET_I"       Loc = "IO_NB_A1" | pulldown=true;
-#NET  "RX_COMMA_DETECT_EN_I"      Loc = "IO_NB_A2" | pullup=true;
+NET  "TX_PRBS_FORCE_ERR_I"       Loc = "IO_NB_A4" | pulldown=true;
+NET  "RX_PRBS_CNT_RESET_I"       Loc = "IO_NB_A5" | pulldown=true;
+#NET  "RX_COMMA_DETECT_EN_I"     Loc = "IO_NB_A6" | pullup=true;
 
 NET  "RX_RESET_DONE_O_N"         Loc = "IO_EB_B1";
 NET  "TX_RESET_DONE_O_N"         Loc = "IO_EB_B2";
@@ -16,5 +17,26 @@ NET  "RX_PRBS_ERR_O_N"           Loc = "IO_EB_B5";
 NET  "RX_BUF_ERR_O_N"            Loc = "IO_EB_B6";
 NET  "TX_BUF_ERR_O_N"            Loc = "IO_EB_B7";
 
-NET  "PLL_CLK_O"                 Loc = "IO_NB_A4";
-NET  "RX_CLK_O"                  Loc = "IO_NB_A5";
+NET  "PLL_CLK_O"                 Loc = "IO_SB_A6" | slew=fast;
+NET  "RX_CLK_O"                  Loc = "IO_SB_A5" | slew=fast;
+
+NET  "RX_DATA_O[0]"              Loc = "IO_SA_A0";
+NET  "RX_DATA_O[1]"              Loc = "IO_SA_B0";
+NET  "RX_DATA_O[2]"              Loc = "IO_SA_A1";
+NET  "RX_DATA_O[3]"              Loc = "IO_SA_B1";
+NET  "RX_DATA_O[4]"              Loc = "IO_SA_A2";
+NET  "RX_DATA_O[5]"              Loc = "IO_SA_B2";
+NET  "RX_DATA_O[6]"              Loc = "IO_SA_A3";
+NET  "RX_DATA_O[7]"              Loc = "IO_SA_B3";
+NET  "RX_DATA_O[8]"              Loc = "IO_SA_A4";
+NET  "RX_DATA_O[9]"              Loc = "IO_SA_B4";
+NET  "RX_DATA_O[10]"             Loc = "IO_SA_A5";
+NET  "RX_DATA_O[11]"             Loc = "IO_SA_B5";
+NET  "RX_DATA_O[12]"             Loc = "IO_SA_A6";
+NET  "RX_DATA_O[13]"             Loc = "IO_SA_B6";
+NET  "RX_DATA_O[14]"             Loc = "IO_SA_A7";
+NET  "RX_DATA_O[15]"             Loc = "IO_SA_B7";
+NET  "RX_DATA_O[16]"             Loc = "IO_SA_A8";
+NET  "RX_DATA_O[17]"             Loc = "IO_SA_B8";
+NET  "RX_DATA_O[18]"             Loc = "IO_SB_A0";
+NET  "RX_DATA_O[19]"             Loc = "IO_SB_B0";

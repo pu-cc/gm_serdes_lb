@@ -7,8 +7,9 @@ OFL = openFPGALoader
 
 TOP = serdes_lb
 PRFLAGS  = -ccf src/$(TOP).ccf -cCP -crc
-NEXTPNRFLAGS = --vopt allow-unconstrained
+NEXTPNRFLAGS =
 OFLFLAGS = --index-chain 0
+PACKFLAGS =
 
 ## target sources
 VLOG_SRC = $(shell find ./src/verilog/ -type f \( -iname \*.v -o -iname \*.sv \))
@@ -32,13 +33,16 @@ net/$(TOP)_synth.json: $(VLOG_SRC)
 	$(YOSYS) -l log/synth.log -p 'read_verilog -sv $^; synth_gatemate -top $(TOP) -luttree $(YSFLAGS) -vlog net/$(TOP)_synth.v -json net/$(TOP)_synth.json'
 
 $(TOP).txt: net/$(TOP)_synth.json src/$(TOP).ccf
-	$(NEXTPNR) --device CCGM1A1 --json net/$(TOP)_synth.json --vopt ccf=src/$(TOP).ccf $(NEXTPNRFLAGS) --vopt out=$(TOP).txt --router router2
+	$(NEXTPNR) -l log/impl.log --device CCGM1A1 --json net/$(TOP)_synth.json --vopt ccf=src/$(TOP).ccf $(NEXTPNRFLAGS) --vopt out=$(TOP).txt --router router2
 
 $(TOP).bit: $(TOP).txt
-	$(PACK) $(TOP).txt $(TOP).bit
+	$(PACK) $(PACKFLAGS) $(TOP).txt $(TOP).bit
 
 jtag: $(TOP).bit
 	$(OFL) $(OFLFLAGS) -b gatemate_evb_jtag $(TOP).bit
+
+jtag-flash: $(TOP).bit
+	$(OFL) $(OFLFLAGS) -b gatemate_evb_jtag -f $(TOP).bit
 
 clean:
 	$(RM) rm log/*.log
