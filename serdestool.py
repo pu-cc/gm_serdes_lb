@@ -119,7 +119,6 @@ class JtagTool:
     def __init__(self, engine):
         self._engine = engine
         self._chain_idx = args.idx
-        self.idcode()
 
     def write_ir(self, instruction) -> None:
         byp_before = BitSequence('1'*6*self._taps_before, msb=True)
@@ -1297,7 +1296,7 @@ class SerdesTool:
             N2 = {0b00: 3, 0b01: 2, 0b10: 4, 0b11: 5}.get(PLL_MAIN_DIVSEL & 0b11, None)
             OUTDIV = {0b00: 1, 0b01: 2, 0b11: 4}.get(PLL_OUT_DIVSEL, None)
 
-            bit_rate_clock = 2 * 100e6 * N1 * N2 * N3 / OUTDIV if None not in (N1, N2, N3, OUTDIV) else None
+            bit_rate_clock = 2 * args.refclk * N1 * N2 * N3 / OUTDIV if None not in (N1, N2, N3, OUTDIV) else None
 
             # Decode TX_DATAPATH_SEL
             datapath_mode = (TX_DATAPATH_SEL & 0b10) >> 1  # Extract MSB
@@ -1310,7 +1309,7 @@ class SerdesTool:
                 AddDiv = {0b00: 1, 0b01: 2, 0b11: 4}.get(PLL_OUT_DIVSEL, None)
 
             PLL_FCNTRL = self.regfile.fields.get("PLL_FCNTRL", {}).get("val", 0x0)
-            data_path_clock = (100e6 * N1 * N2 * N3) / (self.olclkg[PLL_FCNTRL] * AddDiv) if None not in (N1, N2, N3, OUTDIV, AddDiv) else None
+            data_path_clock = (args.refclk * N1 * N2 * N3) / (self.olclkg[PLL_FCNTRL] * AddDiv) if None not in (N1, N2, N3, OUTDIV, AddDiv) else None
 
             bit_rate_str = f"Bit Rate Clock: {bit_rate_clock / 1e6:.2f} MHz" if bit_rate_clock else "Invalid PLL Config"
             data_path_str = f"TX Data Path Clock: {data_path_clock / 1e6:.2f} MHz" if data_path_clock else "Invalid Data Path Config"
@@ -1526,6 +1525,7 @@ if __name__ == '__main__':
         p.add_argument('--index-chain', dest='idx', default=0, required=False, help='device index in JTAG chain (default: %(default)s)')
         p.add_argument('--freq', type=ArgHzRegex, default='20M', metavar="[0 - 30M]", required=False, help='frequency setting; append "k" to the argument for kilohertz or "M" for megahertz (default: %(default)s)')
         p.add_argument('-m', dest='genmod', type=str, required=False, help='generate verilog or vhdl module and exit; specify the file format with extension .v or .vhd')
+        p.add_argument('--refclk', dest='refclk', type=float, default=100e6, help='serdes reference clock frequency (default: %(default)s)')
         p.add_argument('--rdregrx', dest='rdregrx', action='store_true', help='read rx regfile')
         p.add_argument('--rdregrxdata', dest='rdregrxdata', action='store_true', help='read rx data')
         p.add_argument('--rdregtx', dest='rdregtx', action='store_true', help='read tx regfile')
