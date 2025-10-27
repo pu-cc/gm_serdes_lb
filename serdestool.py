@@ -1273,7 +1273,7 @@ class SerdesTool:
         signal.signal(signal.SIGWINCH, handle_resize)
 
         selected_index = 0
-        show_hex = False
+        show_hex = True
         search_results = []
         search_index = 0
 
