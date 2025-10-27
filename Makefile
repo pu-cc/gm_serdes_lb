@@ -44,6 +44,9 @@ jtag: $(TOP).bit
 jtag-flash: $(TOP).bit
 	$(OFL) $(OFLFLAGS) -b gatemate_evb_jtag -f $(TOP).bit
 
+spi: $(TOP).bit
+	$(OFL) $(OFLFLAGS) -b gatemate_evb_spi -m $(TOP).bit
+
 clean:
 	$(RM) rm log/*.log
 	$(RM) net/*_synth.json
