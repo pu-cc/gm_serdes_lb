@@ -1142,7 +1142,7 @@ class SerdesTool:
             self.wr_regfile(addr=0x12, data=0x3000, mask=0x3000) # RX_ALIGN_COMMA_WORD=3 (32 bit)
 
             # NOTE: Please define position of the k-word using the `TX_CHAR_IS_K_I` input: set to 8'h0000_0001
-            self.wr_regfile_tx_data(data=0x1284A1284A1284A128BC) # 64'h4A4A4A4A_4A4A4ABC
+            #self.wr_regfile_tx_data(data=0x1284A1284A1284A128BC) # 64'h4A4A4A4A_4A4A4ABC
 
             self.wr_regfile(addr=0x11, data=0x0C00, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=1
             self.wr_regfile(addr=0x12, data=0x0C00, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=1
@@ -1311,8 +1311,22 @@ class SerdesTool:
             PLL_FCNTRL = self.regfile.fields.get("PLL_FCNTRL", {}).get("val", 0x0)
             data_path_clock = (args.refclk * N1 * N2 * N3) / (self.olclkg[PLL_FCNTRL] * AddDiv) if None not in (N1, N2, N3, OUTDIV, AddDiv) else None
 
+            refclk_str = f"Reference Clock: {args.refclk / 1e6:.2f} MHz"
             bit_rate_str = f"Bit Rate Clock: {bit_rate_clock / 1e6:.2f} MHz" if bit_rate_clock else "Invalid PLL Config"
             data_path_str = f"TX Data Path Clock: {data_path_clock / 1e6:.2f} MHz" if data_path_clock else "Invalid Data Path Config"
+
+            # Extract RX data
+            word80 = self.regfile.fields.get("RX_DATA[79:64]", {}).get("val", 0x0)
+            word80 = (word80 << 16) | self.regfile.fields.get("RX_DATA[63:48]", {}).get("val", 0x0)
+            word80 = (word80 << 16) | self.regfile.fields.get("RX_DATA[47:32]", {}).get("val", 0x0)
+            word80 = (word80 << 16) | self.regfile.fields.get("RX_DATA[31:16]", {}).get("val", 0x0)
+            word80 = (word80 << 16) | self.regfile.fields.get("RX_DATA[15:0]",  {}).get("val", 0x0)
+            rx_data_80bit_str = f"RX_DATA[79:0]: 0x{word80:020X}"
+
+            word64 = 0
+            for bit_offset in range(0, 80, 10):
+                word64 |= ((word80 >> bit_offset) & 0xFF) << int((bit_offset * 8)/10)
+            rx_data_64bit_str = f"RX_DATA[63:0]: 0x{word64:016X}"
 
             stdscr.clear()
             stdscr.addstr(0, 2, " FPGA SerDes Parameters (Auto-Update Enabled) ", curses.A_BOLD | curses.A_REVERSE)
@@ -1347,9 +1361,11 @@ class SerdesTool:
                             # Print value in color
                             stdscr.addstr(y_pos, x_pos + max_name_length + 1, f"{formatted_value:<8}", curses.color_pair(color_pair))
 
-
-            stdscr.addstr(max_y - 5, 2, bit_rate_str)
-            stdscr.addstr(max_y - 4, 2, data_path_str)
+            stdscr.addstr(max_y - 9, 2, refclk_str)
+            stdscr.addstr(max_y - 8, 2, bit_rate_str)
+            stdscr.addstr(max_y - 7, 2, data_path_str)
+            stdscr.addstr(max_y - 5, 2, rx_data_80bit_str)
+            stdscr.addstr(max_y - 4, 2, rx_data_64bit_str)
 
             search_hint = "[n] Next match  |  " if search_results else ""
             stdscr.addstr(max_y - 2, 2, f"{search_hint}[Arrow Keys] Navigate | [Enter] Edit | [/] Find | [h] Toggle HEX/DEC | [q] Quit", curses.A_BOLD)
