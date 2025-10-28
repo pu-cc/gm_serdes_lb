@@ -77,7 +77,7 @@ module serdes_lb (
 
     parameter DATAPATH = 80; // 80, 40, 20
 
-    parameter ENABLE_8B10B = 1'b0;
+    parameter ENABLE_8B10B = 1'b1;
     parameter ENABLE_COMMADETECT = 1'b1 & ENABLE_8B10B;
 
     parameter [2:0] PRBS_SEL =
@@ -135,7 +135,7 @@ module serdes_lb (
                 (pos == 0) ? 64'h4A4A4A4A_4A4A4ABC :
                 (pos == 1) ? 64'h4A4A4A4A_4A4ABC4A :
                 (pos == 2) ? 64'h4A4A4A4A_4ABC4A4A :
-                (pos == 3) ? 64'h4A4A4A4A_BC4A4A4A :
+                (pos == 3) ? 64'hA44A4A4A_BC4A4A4A :
                 (pos == 4) ? 64'h4A4A4ABC_4A4A4A4A :
                 (pos == 5) ? 64'h4A4ABC4A_4A4A4A4A :
                 (pos == 6) ? 64'h4ABC4A4A_4A4A4A4A : 64'hBC4A4A4A_4A4A4A4A;
@@ -157,13 +157,13 @@ module serdes_lb (
     begin
         if (comma == 1'b1) begin
             calcTxK =
-                (comma_pos == 0) ? 8'b0000_0001 :
-                (comma_pos == 1) ? 8'b0000_0010 :
-                (comma_pos == 2) ? 8'b0000_0100 :
-                (comma_pos == 3) ? 8'b0000_1000 :
-                (comma_pos == 4) ? 8'b0001_0000 :
-                (comma_pos == 5) ? 8'b0010_0000 :
-                (comma_pos == 6) ? 8'b0100_0000 : 8'b1000_0000;
+                (pos == 0) ? 8'b0000_0001 :
+                (pos == 1) ? 8'b0000_0010 :
+                (pos == 2) ? 8'b0000_0100 :
+                (pos == 3) ? 8'b0000_1000 :
+                (pos == 4) ? 8'b0001_0000 :
+                (pos == 5) ? 8'b0010_0000 :
+                (pos == 6) ? 8'b0100_0000 : 8'b1000_0000;
         end
         else begin
             calcTxK = 8'b0000_0000;
