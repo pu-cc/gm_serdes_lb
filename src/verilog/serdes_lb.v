@@ -14,7 +14,7 @@ module serdes_lb (
     output RX_RESET_DONE_O_N, TX_RESET_DONE_O_N,
     output TX_DETECT_RX_PRESENT_O_N, TX_DETECT_RX_DONE_O_N,
     output TX_BUF_ERR_O_N, RX_BUF_ERR_O_N,
-    output RX_PRBS_ERR_O_N
+    output RX_BYTE_IS_ALIGNED_O_N, RX_BYTE_REALIGN_O_N
 );
 
     // reset
@@ -41,12 +41,16 @@ module serdes_lb (
     assign TX_DETECT_RX_DONE_O_N = ~TX_DETECT_RX_DONE_O;
 
     wire RX_PRBS_ERR_O;
-    assign RX_PRBS_ERR_O_N = ~RX_PRBS_ERR_O;
 
     wire TX_BUF_ERR_O;
     wire RX_BUF_ERR_O;
     assign TX_BUF_ERR_O_N  = ~TX_BUF_ERR_O;
     assign RX_BUF_ERR_O_N  = ~RX_BUF_ERR_O;
+
+    wire RX_BYTE_IS_ALIGNED_O;
+    wire RX_BYTE_REALIGN_O;
+    assign RX_BYTE_IS_ALIGNED_O_N  = ~RX_BYTE_IS_ALIGNED_O;
+    assign RX_BYTE_REALIGN_O_N  = ~RX_BYTE_REALIGN_O;
 
     wire [19:0] RX_DATA_O;
 
@@ -398,6 +402,8 @@ CC_SERDES #(
     // TX
     .TX_CLK_I(PLL_CLK_O),
     .TX_DATA_I(calcTxData(K_POS, ENABLE_COMMADETECT)),
+    .TX_CHAR_DISPVAL_I(8'h0),
+    .TX_CHAR_DISPMODE_I(8'h0),
     .TX_POWER_DOWN_N_I(1'h1),
     .TX_POLARITY_I(1'h0),
     .TX_PRBS_SEL_I(PRBS_SEL),
@@ -405,8 +411,6 @@ CC_SERDES #(
     .TX_8B10B_EN_I(ENABLE_8B10B),
     .TX_8B10B_BYPASS_I(8'h0),
     .TX_CHAR_IS_K_I(calcTxK(K_POS, ENABLE_COMMADETECT)),
-    .TX_CHAR_DISPMODE_I(8'h0),
-    .TX_CHAR_DISPVAL_I(8'h0),
     .TX_ELEC_IDLE_I(1'h0),
     .TX_DETECT_RX_I(1'b0),
     .TX_DETECT_RX_DONE_O(TX_DETECT_RX_DONE_O),
@@ -432,8 +436,8 @@ CC_SERDES #(
     .RX_CHAR_IS_K_O(),
     .RX_DISP_ERR_O(),
     .RX_BUF_ERR_O(RX_BUF_ERR_O),
-    .RX_BYTE_IS_ALIGNED_O(),
-    .RX_BYTE_REALIGN_O(),
+    .RX_BYTE_IS_ALIGNED_O(RX_BYTE_IS_ALIGNED_O),
+    .RX_BYTE_REALIGN_O(RX_BYTE_REALIGN_O),
     .RX_EI_EN_O(),
     // REGFILE
     .REGFILE_CLK_I(1'h0),

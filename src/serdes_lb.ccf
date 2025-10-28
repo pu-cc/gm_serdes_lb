@@ -12,9 +12,10 @@ NET  "RX_RESET_DONE_O_N"         Loc = "IO_EB_B1";
 NET  "TX_RESET_DONE_O_N"         Loc = "IO_EB_B2";
 NET  "TX_DETECT_RX_DONE_O_N"     Loc = "IO_EB_B3";
 NET  "TX_DETECT_RX_PRESENT_O_N"  Loc = "IO_EB_B4";
-NET  "RX_PRBS_ERR_O_N"           Loc = "IO_EB_B5";
-NET  "RX_BUF_ERR_O_N"            Loc = "IO_EB_B6";
-NET  "TX_BUF_ERR_O_N"            Loc = "IO_EB_B7";
+NET  "RX_BYTE_IS_ALIGNED_O_N"    Loc = "IO_EB_B5";
+NET  "RX_BYTE_REALIGN_O_N"       Loc = "IO_EB_B6";
+NET  "RX_BUF_ERR_O_N"            Loc = "IO_EB_B7";
+NET  "TX_BUF_ERR_O_N"            Loc = "IO_EB_B8";
 
 NET  "PLL_CLK_O"                 Loc = "IO_SB_A6" | slew=fast;
 NET  "RX_CLK_O"                  Loc = "IO_SB_A5" | slew=fast;
