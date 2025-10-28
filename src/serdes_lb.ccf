@@ -2,8 +2,7 @@
 
 NET  "ref_clk"                   Loc = "IO_SB_A8" | schmitt_trigger=true;
 
-NET  "pll_rstn_i"                Loc = "IO_EB_B0" | pullup=true;
-NET  "trx_rstn_i"                Loc = "IO_NB_B5" | pullup=true;
+NET  "trx_rstn_i"                Loc = "IO_EB_B0" | pullup=true;
 
 NET  "TX_PRBS_FORCE_ERR_I"       Loc = "IO_NB_A4" | pulldown=true;
 NET  "RX_PRBS_CNT_RESET_I"       Loc = "IO_NB_A5" | pulldown=true;

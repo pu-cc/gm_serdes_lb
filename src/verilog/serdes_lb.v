@@ -1,14 +1,13 @@
 `timescale 1ns / 1ps
 
 module serdes_lb (
-    input pll_rstn_i,
     input trx_rstn_i,
     input ref_clk,
 
     input RX_PRBS_CNT_RESET_I,
     input TX_PRBS_FORCE_ERR_I,
 
-    output [63:0] RX_DATA_O,
+    output [19:0] RX_DATA_O,
     output PLL_CLK_O,
     output RX_CLK_O,
 
@@ -17,8 +16,6 @@ module serdes_lb (
     output TX_BUF_ERR_O_N, RX_BUF_ERR_O_N,
     output RX_PRBS_ERR_O_N
 );
-
-    wire RX_COMMA_DETECT_EN_I = 1'b1;
 
     // reset
     reg [8:0] rst_cnt = 0;
@@ -30,7 +27,6 @@ module serdes_lb (
     end
 
     wire trx_rst_i = ~trx_rstn_i | rst;
-    wire pll_rst_i = ~pll_rstn_i | rst;
 
     wire CLK_CORE_PLL_O_N;
 
@@ -52,7 +48,7 @@ module serdes_lb (
     assign TX_BUF_ERR_O_N  = ~TX_BUF_ERR_O;
     assign RX_BUF_ERR_O_N  = ~RX_BUF_ERR_O;
 
-    wire [63:0] RX_DATA_O;
+    wire [19:0] RX_DATA_O;
 
     wire RX_EI_EN_O, REGFILE_RDY_O, CLK_CORE_RX_O;
     wire [7:0]  RX_CHAR_IS_K_O, RX_CHAR_IS_COMMA_O, RX_NOT_IN_TABLE_O;
@@ -81,8 +77,8 @@ module serdes_lb (
 
     parameter DATAPATH = 80; // 80, 40, 20
 
-    parameter ENABLE_8B10B = 1'b1;
-    parameter ENABLE_COMMADETECT = 1'b1;
+    parameter ENABLE_8B10B = 1'b0;
+    parameter ENABLE_COMMADETECT = 1'b1 & ENABLE_8B10B;
 
     parameter [2:0] PRBS_SEL =
         3'b000; // PRBS checker disabled
@@ -114,8 +110,8 @@ module serdes_lb (
     }; // default: 2'h3
 
     parameter [5:0] PLL_FCNTRL = {
-        DATAPATH == 80 ? 6'h3A : (DATAPATH == 40 ? 6'h3A : (DATAPATH == 20 ? 6'd26 : 6'bx))
-    }; // default: 6'h3A = 58 ^= 20;
+        DATAPATH == 80 ? 6'h3A : (DATAPATH == 40 ? 6'h3A : (DATAPATH == 20 ? 6'h1A : 6'bx))
+    }; // default: 6'h3A = 58 ^= 20; 6'h1A = 26 ^= 10;
 
     parameter [5:0] PLL_MAIN_DIVSEL = {
         1'b0, // PLL_MAINDIV[5]: not used
@@ -196,7 +192,7 @@ CC_SERDES #(
     .RX_EQA_CKP_LF(8'hA3),
     .RX_EQA_CKP_HF(8'hA3),
     .RX_EQA_CKP_OFFSET(8'h01),
-    .RX_EN_EQA(1'h0),
+    .RX_EN_EQA(1'h1),
     .RX_EQA_LOCK_CFG(4'h0),
     .RX_TH_MON1(5'h8),
     .RX_EN_EQA_EXT_VALUE(4'h0),
@@ -209,8 +205,8 @@ CC_SERDES #(
     .RX_AFE_VCMSEL(3'h4),
     .RX_CDR_CKP(8'hF8),
     .RX_CDR_CKI(8'h00),
-    .RX_CDR_TRANS_TH(9'h80), // h15?
-    .RX_CDR_LOCK_CFG(6'hB),
+    .RX_CDR_LOCK_CFG(8'hD5),
+    .RX_CDR_TRANS_TH(7'h8),
     .RX_CDR_FREQ_ACC(15'h0),
     .RX_CDR_PHASE_ACC(16'h0000),
     .RX_CDR_SET_ACC_CONFIG(2'h0),
@@ -272,10 +268,10 @@ CC_SERDES #(
     .RX_BYTE_REALIGN(1'h0),
     .TX_SEL_PRE(5'h0),
     .TX_SEL_POST(5'h0),
-    .TX_AMP(5'hF),
-    .TX_BRANCH_EN_PRE(5'h0),
+    .TX_AMP(5'd30),
+    .TX_BRANCH_EN_PRE(5'hF),
     .TX_BRANCH_EN_MAIN(6'h3F),
-    .TX_BRANCH_EN_POST(5'h0),
+    .TX_BRANCH_EN_POST(5'hF),
     .TX_TAIL_CASCODE(3'h4),
     .TX_DC_ENABLE(7'h3F),
     .TX_DC_OFFSET(5'h8), // ? note: set to 8
@@ -396,23 +392,25 @@ CC_SERDES #(
     .RX_BUF_RESET_I(1'b0),
     .TX_PCS_RESET_I(1'b0),
     .TX_PMA_RESET_I(1'b0),
-    .PLL_RESET_I(pll_rst_i),
+    .PLL_RESET_I(trx_rst_i),
     .TX_RESET_DONE_O(TX_RESET_DONE_O),
     .RX_RESET_DONE_O(RX_RESET_DONE_O),
     // TX
     .TX_CLK_I(PLL_CLK_O),
-    .TX_DATA_I(calcTxData(K_POS, 1'b1)),
+    .TX_DATA_I(calcTxData(K_POS, ENABLE_COMMADETECT)),
     .TX_POWER_DOWN_N_I(1'h1),
     .TX_POLARITY_I(1'h0),
     .TX_PRBS_SEL_I(PRBS_SEL),
     .TX_PRBS_FORCE_ERR_I(TX_PRBS_FORCE_ERR_I),
     .TX_8B10B_EN_I(ENABLE_8B10B),
     .TX_8B10B_BYPASS_I(8'h0),
-    .TX_CHAR_IS_K_I(calcTxK(K_POS, RX_COMMA_DETECT_EN_I)),
+    .TX_CHAR_IS_K_I(calcTxK(K_POS, ENABLE_COMMADETECT)),
     .TX_CHAR_DISPMODE_I(8'h0),
     .TX_CHAR_DISPVAL_I(8'h0),
     .TX_ELEC_IDLE_I(1'h0),
-    .TX_DETECT_RX_I(1'b1),
+    .TX_DETECT_RX_I(1'b0),
+    .TX_DETECT_RX_DONE_O(TX_DETECT_RX_DONE_O),
+    .TX_DETECT_RX_PRESENT_O(TX_DETECT_RX_PRESENT_O),
     .TX_BUF_ERR_O(TX_BUF_ERR_O),
     // RX
     .RX_CLK_I(RX_CLK_O),
@@ -424,17 +422,15 @@ CC_SERDES #(
     .RX_8B10B_EN_I(ENABLE_8B10B),
     .RX_8B10B_BYPASS_I(8'h0),
     .RX_EN_EI_DETECTOR_I(1'h0),
-    .RX_COMMA_DETECT_EN_I(RX_COMMA_DETECT_EN_I),
+    .RX_COMMA_DETECT_EN_I(ENABLE_COMMADETECT),
     .RX_SLIDE_I(1'h0),
-    .RX_MCOMMA_ALIGN_I(RX_COMMA_DETECT_EN_I),
-    .RX_PCOMMA_ALIGN_I(RX_COMMA_DETECT_EN_I),
+    .RX_MCOMMA_ALIGN_I(ENABLE_COMMADETECT),
+    .RX_PCOMMA_ALIGN_I(ENABLE_COMMADETECT),
     .RX_DATA_O(RX_DATA_O),
     .RX_NOT_IN_TABLE_O(),
     .RX_CHAR_IS_COMMA_O(),
     .RX_CHAR_IS_K_O(),
     .RX_DISP_ERR_O(),
-    .TX_DETECT_RX_DONE_O(TX_DETECT_RX_DONE_O),
-    .TX_DETECT_RX_PRESENT_O(TX_DETECT_RX_PRESENT_O),
     .RX_BUF_ERR_O(RX_BUF_ERR_O),
     .RX_BYTE_IS_ALIGNED_O(),
     .RX_BYTE_REALIGN_O(),
