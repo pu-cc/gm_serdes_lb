@@ -136,7 +136,7 @@ module serdes_lb (
     begin
         if (comma == 1'b1) begin
             calcTxData =
-                (pos == 0) ? 64'h4A4A4A4A_4A4A4ABC :
+                (pos == 0) ? 64'h4A4A4AFF_4A4A4ABC :
                 (pos == 1) ? 64'h4A4A4A4A_4A4ABC4A :
                 (pos == 2) ? 64'h4A4A4A4A_4ABC4A4A :
                 (pos == 3) ? 64'hA44A4A4A_BC4A4A4A :
@@ -409,7 +409,7 @@ CC_SERDES #(
     .TX_PRBS_SEL_I(PRBS_SEL),
     .TX_PRBS_FORCE_ERR_I(TX_PRBS_FORCE_ERR_I),
     .TX_8B10B_EN_I(ENABLE_8B10B),
-    .TX_8B10B_BYPASS_I(8'h0),
+    .TX_8B10B_BYPASS_I(8'h00),
     .TX_CHAR_IS_K_I(calcTxK(K_POS, ENABLE_COMMADETECT)),
     .TX_ELEC_IDLE_I(1'h0),
     .TX_DETECT_RX_I(1'b0),
@@ -417,7 +417,7 @@ CC_SERDES #(
     .TX_DETECT_RX_PRESENT_O(TX_DETECT_RX_PRESENT_O),
     .TX_BUF_ERR_O(TX_BUF_ERR_O),
     // RX
-    .RX_CLK_I(RX_CLK_O),
+    .RX_CLK_I(PLL_CLK_O),
     .RX_POWER_DOWN_N_I(1'h1),
     .RX_POLARITY_I(1'h0),
     .RX_PRBS_SEL_I(PRBS_SEL),
