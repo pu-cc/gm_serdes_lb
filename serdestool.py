@@ -113,29 +113,30 @@ class JtagTool:
     CMD_JTAG_STATUS_PLL2       = '011110' # 0x1E
     CMD_JTAG_STATUS_PLL3       = '011111' # 0x1F
 
-    _chain_idx = 0
-    _taps_before = 0
+    _chain_len = 0
 
     def __init__(self, engine):
         self._engine = engine
-        self._chain_idx = args.idx
 
-    def write_ir(self, instruction) -> None:
-        byp_before = BitSequence('1'*6*self._taps_before, msb=True)
-        byp_after = BitSequence('1'*6*self._chain_idx, msb=True)
+    def write_ir(self, instruction, idx=0) -> None:
+        byp_before = BitSequence('1'*6*(self._chain_len-idx-1), msb=True)
+        byp_after = BitSequence('1'*6*idx, msb=True)
         self._engine.write_ir(byp_before+instruction+byp_after)
 
-    def write_dr(self, data) -> None:
-        byp_before = BitSequence('0'*self._taps_before, msb=True)
-        byp_after = BitSequence('0'*self._chain_idx, msb=True)
+    def write_dr(self, data, idx=0) -> None:
+        byp_before = BitSequence('0'*(self._chain_len-idx-1), msb=True)
+        if (idx%8) == 0:
+            byp_after = BitSequence('0'*idx, msb=True)
+        else:
+            byp_after = BitSequence('0'*(8-idx), msb=True)
         self._engine.write_dr(byp_after+data+byp_before)
 
-    def read_dr(self, length: int) -> BitSequence:
-        word = self._engine.read_dr(length+self._taps_before)
-        if self._chain_idx > 0:
-            return word[self._taps_before:-self._chain_idx]
+    def read_dr(self, length: int, idx=0) -> BitSequence:
+        word = self._engine.read_dr(length+(self._chain_len-idx-1))
+        if idx > 0:
+            return word[(self._chain_len-idx-1):-idx]
         else:
-            return word[self._taps_before:]
+            return word[(self._chain_len-idx-1):]
 
     def get_chunk(self, data, start, length):
         return (data >> start) & ((1 << length) - 1)
@@ -144,14 +145,13 @@ class JtagTool:
     def idcode(self) -> int:
         idcodes = self._engine.read_dr(128)
         self._engine.go_idle()
-        chain_len = 0
+        self._chain_len = 0
         for i in range(0, 128, 32):
             chunk_data = self.get_chunk(int(idcodes), i, 32)
             if chunk_data != 0:
-                chain_len += 1
-        print(f'INFO:  Found {chain_len} device{"s" if chain_len > 1 else ""} in JTAG chain.')
-        self._taps_before = chain_len - self._chain_idx - 1
-        return chain_len
+                self._chain_len += 1
+        print(f'INFO:  Found {self._chain_len} device{"s" if self._chain_len > 1 else ""} in JTAG chain.')
+        return self._chain_len
 
     # Read the IDCODE using CMD_JTAG_ID
     def idcode_seq(self) -> int:
@@ -161,7 +161,7 @@ class JtagTool:
         return int(status)
 
     # Configure FPGA using CMD_JTAG_CONFIGURE
-    def wr_cfg(self, cfg_data):
+    def wr_cfg(self, cfg_data, idx):
         a = []
         b = bytearray(cfg_data)
 
@@ -170,26 +170,27 @@ class JtagTool:
 
         seq = BitSequence(bytes_=a[:-1], length=len(b)*8, msb=False, msby=True)
 
-        self.write_ir(BitSequence(self.CMD_JTAG_CONFIGURE, msb=True))
-        self.write_dr(seq)
+        self.write_ir(BitSequence(self.CMD_JTAG_CONFIGURE, msb=True), idx)
+        self.write_dr(seq, idx)
         self._engine.go_idle()
 
-    def wr_serdes_regfile(self, addr, data, mask, wren):
-        self.write_ir(BitSequence(self.CMD_JTAG_WR_SERDES_REGFILE, msb=True))
+    def wr_serdes_regfile(self, idx, addr, data, mask, wren):
+        self.write_ir(BitSequence(self.CMD_JTAG_WR_SERDES_REGFILE, msb=True), idx)
         cmd  = BitSequence(value=addr, length=8,  msb=False, msby=True)
         cmd += BitSequence(value=data, length=16, msb=False, msby=True)
         cmd += BitSequence(value=mask, length=16, msb=False, msby=True)
         cmd += BitSequence(value=wren, length=1, msb=False, msby=True)
-        self.write_dr(cmd)
+        self.write_dr(cmd, idx)
         self._engine.go_idle()
 
-    def rd_serdes_regfile(self):
-        self.write_ir(BitSequence(self.CMD_JTAG_RD_SERDES_REGFILE, msb=True))
-        word = self.read_dr(16)
+    def rd_serdes_regfile(self, idx):
+        self.write_ir(BitSequence(self.CMD_JTAG_RD_SERDES_REGFILE, msb=True), idx)
+        word = self.read_dr(16, idx)
         self._engine.go_idle()
         return word
 
-    def rd_status_pll(self, device=1, pll=0, verbose=0):
+    # Read PLLn status
+    def rd_status_pll(self, idx=0, pll=0, verbose=0):
         bs = BitSequence()
         if pll == 0:
             bs += BitSequence(self.CMD_JTAG_STATUS_PLL0, msb=True)
@@ -202,35 +203,43 @@ class JtagTool:
         else:
             raise JtagError("Invalid PLL number: %s" % pll)
             return 0
-        self._engine.write_ir(bs)
-        status = self._engine.read_dr(17)
+        self.write_ir(bs, idx)
+        status = self.read_dr(17, idx)
         self._engine.go_idle()
 
         pll_status_bin = '{:017b}'.format(int(status))
+
+        #     0: fine tune overflow flag
+        #     1: fine tune underflow flag
+        # 11: 2: fine tune value
+        # 13:12: state
+        # 16:14: coarse tune value
+        fine_tune_overflow_flag = pll_status_bin[-1]
+        fine_tune_underflow_flag = pll_status_bin[-2]
+        fine_tune_value = pll_status_bin[-12:-2]
+        state = pll_status_bin[-14:-12]
+        coarse_tune_value = pll_status_bin[-17:-14]
+
         if verbose:
             print('pll{}: 0x{:05X}'.format(pll, int(status)))
             print('pll%d: 0b%s' %(pll, pll_status_bin))
 
-            #     0: fine tune overflow flag
-            #     1: fine tune underflow flag
-            # 11: 2: fine tune value
-            # 13:12: state
-            # 16:14: coarse tune value
-            print('pll%d: fine tune overflow flag : %s ' %(pll, pll_status_bin[-1]))
-            print('pll%d: fine tune underflow flag : %s ' %(pll, pll_status_bin[-2]))
-            print('pll%d: fine tune value : %s ' %(pll, pll_status_bin[-12:-2]))
+            print('pll%d: fine tune overflow flag : %s ' %(pll, fine_tune_overflow_flag))
+            print('pll%d: fine tune underflow flag : %s ' %(pll, fine_tune_underflow_flag))
+            print('pll%d: fine tune value : %s ' %(pll, fine_tune_value))
 
             #S_IDLE = ‘d0; S_LOCK_IN = ‘d1; S_LOCKED = ‘d2; S_FAST_LOCK = ‘d3;
-            if pll_status_bin[-14:-12] == '00':
-                print('pll%d: state : %s  -> S_IDLE' %(pll, pll_status_bin[-14:-12]))
-            elif pll_status_bin[-14:-12] == '01':
-                print('pll%d: state : %s  -> S_LOCK_IN' %(pll, pll_status_bin[-14:-12]))
-            elif pll_status_bin[-14:-12] == '10':
-                print('pll%d: state : %s  -> S_LOCKED' %(pll, pll_status_bin[-14:-12]))
-            elif pll_status_bin[-14:-12] == '11':
-                print('pll%d: state : %s  -> S_FAST_LOCK' %(pll, pll_status_bin[-14:-12]))
-            print('pll%d: coarse tune value : %s ' %(pll, pll_status_bin[-17:-14]))
-        return (pll_status_bin[-14:-12] == '10') # locked
+            if state == '00':
+                print('pll%d: state : %s  -> S_IDLE' %(pll, state))
+            elif state == '01':
+                print('pll%d: state : %s  -> S_LOCK_IN' %(pll, state))
+            elif state == '10':
+                print('pll%d: state : %s  -> S_LOCKED' %(pll, state))
+            elif state == '11':
+                print('pll%d: state : %s  -> S_FAST_LOCK' %(pll, state))
+            print('pll%d: coarse tune value : %s ' %(pll, coarse_tune_value))
+
+        return fine_tune_overflow_flag, fine_tune_underflow_flag, fine_tune_value, state, coarse_tune_value
 
 class SerdesRegfile:
     def __init__(self, initial_fields):
@@ -608,6 +617,7 @@ class SerdesTool:
             self._board = args.board
             if self._jtag is not None:
                 self.configure()
+            self._tool.idcode()
 
     def configure(self):
         if self._board == Boards_e[0]: # auto
@@ -711,17 +721,17 @@ class SerdesTool:
         else:
             print(line)
 
-    def rd_regfile(self, addr) -> int:
-        self._tool.wr_serdes_regfile(addr=addr, data=0, mask=0, wren=0)
-        return self._tool.rd_serdes_regfile()
+    def rd_regfile(self, idx, addr) -> int:
+        self._tool.wr_serdes_regfile(idx=idx, addr=addr, data=0, mask=0, wren=0)
+        return self._tool.rd_serdes_regfile(idx)
 
-    def wr_regfile(self, addr, data, mask):
-        self._tool.wr_serdes_regfile(addr=addr, data=data, mask=mask, wren=1)
-        self._tool.rd_serdes_regfile()
+    def wr_regfile(self, idx, addr, data, mask):
+        self._tool.wr_serdes_regfile(idx=idx, addr=addr, data=data, mask=mask, wren=1)
+        self._tool.rd_serdes_regfile(idx)
 
     def rd_regfile_rx(self, verbose=0):
         for addr in range(0x00, 0x30):
-            word = self.rd_regfile(addr)
+            word = self.rd_regfile(args.idx, addr)
             if verbose == 1:
                 print(f'{addr:02X}: 0x{int(word):04X}')
             elif verbose == 2:
@@ -734,7 +744,7 @@ class SerdesTool:
     def rd_regfile_rx_data(self):
         rxd_80bit = BitSequence()
         for addr in range(0x20, 0x25):
-            rxd_80bit += self.rd_regfile(addr)
+            rxd_80bit += self.rd_regfile(args.idx, addr)
         rxd_64bit = rxd_80bit[0:7+1] + rxd_80bit[10:17+1] + rxd_80bit[20:27+1] + rxd_80bit[30:37+1] + rxd_80bit[40:47+1] + rxd_80bit[50:57+1] + rxd_80bit[60:67+1] + rxd_80bit[70:77+1]
         return rxd_64bit, rxd_80bit
 
@@ -742,7 +752,7 @@ class SerdesTool:
         rx_data_80bit = 0
         word_idx = 0
         for addr in range(0x20, 0x25):
-            word = self.rd_regfile(addr)
+            word = self.rd_regfile(args.idx, addr)
             if verbose == 1:
                 print(f'{addr:02X}: 0x{int(word):04X}')
             rx_fields = {
@@ -772,14 +782,14 @@ class SerdesTool:
         return rx_data_64bit, rx_data_80bit
 
     def wr_regfile_tx_data(self, data):
-        self.wr_regfile(addr=0x41, data=0x1000, mask=0x1F00) # TX_DATA_OVR=1, TX_DATA_CNT=0, TX_DATA_VALID=0
+        self.wr_regfile(idx=args.idx, addr=0x41, data=0x1000, mask=0x1F00) # TX_DATA_OVR=1, TX_DATA_CNT=0, TX_DATA_VALID=0
         for i in range(5):
-            self.wr_regfile(addr=0x42, data=(data >> 16*i) & 0xFFFF, mask=0xFFFF) # auto inc
-        self.wr_regfile(addr=0x41, data=0x1B00, mask=0x1F00) # TX_DATA_OVR=1, TX_DATA_CNT=5, TX_DATA_VALID=1
+            self.wr_regfile(idx=args.idx, addr=0x42, data=(data >> 16*i) & 0xFFFF, mask=0xFFFF) # auto inc
+        self.wr_regfile(idx=args.idx, addr=0x41, data=0x1B00, mask=0x1F00) # TX_DATA_OVR=1, TX_DATA_CNT=5, TX_DATA_VALID=1
 
     def rd_regfile_tx(self, verbose=0):
         for addr in range(0x30, 0x43): # 0x43..0x4F unused
-            word = self.rd_regfile(addr)
+            word = self.rd_regfile(args.idx, addr)
             if verbose == 1:
                 print(f'{addr:02X}: 0x{int(word):04X}')
             elif verbose == 2:
@@ -791,7 +801,7 @@ class SerdesTool:
 
     def rd_regfile_pll(self, verbose=0):
         for addr in range(0x50, 0x5D):
-            word = self.rd_regfile(addr)
+            word = self.rd_regfile(args.idx, addr)
             if verbose == 1:
                 print(f'{addr:02X}: 0x{int(word):04X}')
             elif verbose == 2:
@@ -802,7 +812,7 @@ class SerdesTool:
                     self.fprint(key, v, line)
 
     def rd_regfile_pll_div_settings(self):
-        word = self.rd_regfile(addr=0x51)
+        word = self.rd_regfile(args.idx, addr=0x51)
         FCNTRL = word[0:5+1]
         MAIN_DIVSEL = word[6:11+1]
         OUT_DIVSEL = word[12:13+1]
@@ -812,23 +822,23 @@ class SerdesTool:
         return n1, n2, n3, OUT_DIVSEL
 
     def rd_regfile_pll_status(self):
-        return self.rd_regfile(addr=0x55) + self.rd_regfile(addr=0x56)
+        return self.rd_regfile(args.idx, addr=0x55) + self.rd_regfile(args.idx, addr=0x56)
 
     def rd_regfile_pll_bisc_status(self):
-        return self.rd_regfile(addr=0x5A) + self.rd_regfile(addr=0x5B)
+        return self.rd_regfile(args.idx, addr=0x5A) + self.rd_regfile(args.idx, addr=0x5B)
 
     def reset_serdes_tx(self):
         print('INFO:  Resetting SerDes TX')
 
-        word = self.rd_regfile(addr=0x5C)
+        word = self.rd_regfile(args.idx, addr=0x5C)
         if (word[0] != 1 or word[2] != 1):
             print(f'ERROR: SerDes not enabled or in testmode. 0x5C=0x{int(word):04X}')
             return
 
         # TX reset
-        self.wr_regfile(addr=0x3F, data=0xC000, mask=0xC000) # TX_RESET_OVR=1, TX_RESET=1
-        self.wr_regfile(addr=0x3F, data=0x0000, mask=0xC000) # TX_RESET_OVR=0, TX_RESET=0
-        word = self.rd_regfile(addr=0x41)
+        self.wr_regfile(idx=args.idx, addr=0x3F, data=0xC000, mask=0xC000) # TX_RESET_OVR=1, TX_RESET=1
+        self.wr_regfile(idx=args.idx, addr=0x3F, data=0x0000, mask=0xC000) # TX_RESET_OVR=0, TX_RESET=0
+        word = self.rd_regfile(args.idx, addr=0x41)
         timeout = 5
         while timeout > 0:
             if (int(word[14]) != 1): # TX_RESET_DONE
@@ -840,40 +850,40 @@ class SerdesTool:
 
     def set_serdes_datapath(self, mode=80):
         if mode == 0 or mode == 20:
-            self.wr_regfile(addr=0x2A, data=0x0000, mask=0x000C) # RX_DATAPATH_SEL=0
-            self.wr_regfile(addr=0x40, data=0x0000, mask=0x0018) # TX_DATAPATH_SEL=0 (16/20)
+            self.wr_regfile(idx=args.idx, addr=0x2A, data=0x0000, mask=0x000C) # RX_DATAPATH_SEL=0
+            self.wr_regfile(idx=args.idx, addr=0x40, data=0x0000, mask=0x0018) # TX_DATAPATH_SEL=0 (16/20)
         elif mode == 1 or mode == 40:
             datapath_sel = 1
-            self.wr_regfile(addr=0x2A, data=0x0001, mask=0x000C) # RX_DATAPATH_SEL=1
-            self.wr_regfile(addr=0x40, data=0x0008, mask=0x0018) # TX_DATAPATH_SEL=1 (32/40)
+            self.wr_regfile(idx=args.idx, addr=0x2A, data=0x0001, mask=0x000C) # RX_DATAPATH_SEL=1
+            self.wr_regfile(idx=args.idx, addr=0x40, data=0x0008, mask=0x0018) # TX_DATAPATH_SEL=1 (32/40)
         elif mode == 2 or mode == 3 or mode == 80:
             datapath_sel = 3
-            self.wr_regfile(addr=0x2A, data=0x000C, mask=0x000C) # RX_DATAPATH_SEL=3
-            self.wr_regfile(addr=0x40, data=0x0018, mask=0x0018) # TX_DATAPATH_SEL=3 (64/80)
+            self.wr_regfile(idx=args.idx, addr=0x2A, data=0x000C, mask=0x000C) # RX_DATAPATH_SEL=3
+            self.wr_regfile(idx=args.idx, addr=0x40, data=0x0018, mask=0x0018) # TX_DATAPATH_SEL=3 (64/80)
         else:
             print(f'ERROR: Invalid datapath configruation {mode}')
 
     def check_serdes_datapath(self, mode):
         check = 3 if mode == 80 else 1 if mode == 40 else 0 if mode == 20 else mode
-        word = self.rd_regfile(addr=0x2A)
+        word = self.rd_regfile(args.idx, addr=0x2A)
         if (int(word[2:3+1]) != check):
             print(f'ERROR: RX_DATAPATH_SEL != {check} ({int(word[2:3+1]):2X})')
-        word = self.rd_regfile(addr=0x40)
+        word = self.rd_regfile(args.idx, addr=0x40)
         if (int(word[3:4+1]) != check):
             print(f'ERROR: TX_DATAPATH_SEL != {check} ({int(word[3:4+1]):2X})')
 
     def reset_serdes_rx(self):
         print('INFO:  Resetting SerDes RX')
 
-        word = self.rd_regfile(addr=0x5C)
+        word = self.rd_regfile(args.idx, addr=0x5C)
         if (word[0] != 1 or word[2] != 1):
             print(f'ERROR: SerDes not enabled or in testmode. 0x5C=0x{int(word):04X}')
             return
 
         # RX reset
-        self.wr_regfile(addr=0x2B, data=0x0003, mask=0x0003) # RX_RESET_OVR=1, RX_RESET=1
-        self.wr_regfile(addr=0x3F, data=0x0000, mask=0x0003) # RX_RESET_OVR=0, RX_RESET=0
-        word = self.rd_regfile(addr=0x2C)
+        self.wr_regfile(idx=args.idx, addr=0x2B, data=0x0003, mask=0x0003) # RX_RESET_OVR=1, RX_RESET=1
+        self.wr_regfile(idx=args.idx, addr=0x3F, data=0x0000, mask=0x0003) # RX_RESET_OVR=0, RX_RESET=0
+        word = self.rd_regfile(args.idx, addr=0x2C)
         timeout = 5
         while timeout > 0:
             if (int(word[10]) != 1): # RX_RESET_DONE
@@ -910,7 +920,7 @@ class SerdesTool:
         status = self.rd_regfile_pll_status()
         if (status[0] == 1):
             print('INFO:  Disabling SerDes ADPLL')
-            self.wr_regfile(addr=0x50, data=0x0000, mask=0x0001)
+            self.wr_regfile(idx=args.idx, addr=0x50, data=0x0000, mask=0x0001)
 
         if outdiv == 1:
             pll_div = 0x0000
@@ -932,31 +942,31 @@ class SerdesTool:
             pll_div = (pll_div & ~(0b11 << 9)) | (0b10 << 9)
 
         print('INFO:  Writing SerDes ADPLL divider settings')
-        self.wr_regfile(addr=0x51, data=pll_div, mask=0x3FC0)
+        self.wr_regfile(idx=args.idx, addr=0x51, data=pll_div, mask=0x3FC0)
 
         if (calib):
             print('INFO:  Stopping SerDes ADPLL self-calibration')
-            self.wr_regfile(addr=0x57, data=0x0004, mask=0x0007)
-            self.wr_regfile(addr=0x57, data=
+            self.wr_regfile(idx=args.idx, addr=0x57, data=0x0004, mask=0x0007)
+            self.wr_regfile(idx=args.idx, addr=0x57, data=
                 ((self.ADPLL_PFDAC_TIMER    & 0x000F) <<  3) |
                 ((self.ADPLL_PFDAC_COR_DLY  & 0x0007) << 10) |
                 ((self.ADPLL_PFDAC_CAL_SIGN & 0x0001) << 13) |
                 ((self.ADPLL_PFDAC_AUTO_CAL & 0x0001) << 14),
                 mask=0xFFF8)
-            self.wr_regfile(addr=0x58, data=
+            self.wr_regfile(idx=args.idx, addr=0x58, data=
                 ((self.ADPLL_PFDAC_COR_DLY  & 0x001F) << 0) |
                 ((self.ADPLL_PFDAC_CAL_SIGN & 0x001F) << 5) |
                 ((self.ADPLL_PFDAC_AUTO_CAL & 0x001F) << 10),
                 mask=0xFFFF)
 
         print('INFO:  Starting SerDes ADPLL')
-        self.wr_regfile(addr=0x50, data=0x0002, mask=0x0007)
-        self.wr_regfile(addr=0x50, data=0x0003, mask=0x0003)
+        self.wr_regfile(idx=args.idx, addr=0x50, data=0x0002, mask=0x0007)
+        self.wr_regfile(idx=args.idx, addr=0x50, data=0x0003, mask=0x0003)
 
         if (calib):
             print('INFO:  Starting SerDes ADPLL self-calibration')
-            self.wr_regfile(addr=0x57, data=0x0004, mask=0x0007)
-            self.wr_regfile(addr=0x57, data=0x0005, mask=0x0007) # BISC mode B, enable
+            self.wr_regfile(idx=args.idx, addr=0x57, data=0x0004, mask=0x0007)
+            self.wr_regfile(idx=args.idx, addr=0x57, data=0x0005, mask=0x0007) # BISC mode B, enable
 
         timeout = 5
         while timeout > 0:
@@ -980,7 +990,7 @@ class SerdesTool:
     def tc_prbs(self, force_err=False):
         print(f'INFO:  Starting SerDes PRBS testcases')
 
-        word = self.rd_regfile(addr=0x5C)
+        word = self.rd_regfile(args.idx, addr=0x5C)
         if (word[0] != 1 or word[2] != 1):
             print(f'ERROR: SerDes not enabled or in testmode. 0x5C=0x{int(word):04X}')
             return
@@ -995,21 +1005,21 @@ class SerdesTool:
         self.check_serdes_datapath(80)
 
         # disable testmode?
-        self.wr_regfile(addr=0x2A, data=0x0210, mask=0x02F0) # RX_PRBS_OVR=1, RX_PRBS_SEL=0, RX_PRBS_CNT_RESET=1
+        self.wr_regfile(idx=args.idx, addr=0x2A, data=0x0210, mask=0x02F0) # RX_PRBS_OVR=1, RX_PRBS_SEL=0, RX_PRBS_CNT_RESET=1
 
         for i in range(0, 2):
             prbs = 7 if i == 0 else 15 if i == 1 else 23 if i == 2 else 31 if i == 3 else 0
             print(f'INFO:  Setting up PRBS-{prbs}')
 
-            self.wr_regfile(addr=0x40, data=((i+1) << 6) | (1 << 5), mask=0x01E0) # TX_PRBS_OVR=1, TX_PRBS_SEL=i
-            word = self.rd_regfile(addr=0x40)
+            self.wr_regfile(idx=args.idx, addr=0x40, data=((i+1) << 6) | (1 << 5), mask=0x01E0) # TX_PRBS_OVR=1, TX_PRBS_SEL=i
+            word = self.rd_regfile(args.idx, addr=0x40)
             #if (word[5] == 1):
             #    print(f'ERROR: TX PRBS overwrite is not disabled')
             if (int(word[6:8+1]) != i+1):
                 print(f'ERROR: TX PRBS mode is invalid')
 
-            self.wr_regfile(addr=0x2A, data=((i+1) << 5) | (1 << 4), mask=0x00F0) # RX_PRBS_OVR=1, RX_PRBS_SEL=i
-            word = self.rd_regfile(addr=0x2A)
+            self.wr_regfile(idx=args.idx, addr=0x2A, data=((i+1) << 5) | (1 << 4), mask=0x00F0) # RX_PRBS_OVR=1, RX_PRBS_SEL=i
+            word = self.rd_regfile(args.idx, addr=0x2A)
             #if (word[4] == 1):
             #    print(f'ERROR: RX PRBS overwrite is not disabled')
             if (word[9] == 1):
@@ -1024,7 +1034,7 @@ class SerdesTool:
                 print(f'INFO:  {i}/{n}')
                 sleep(1)
 
-            word = self.rd_regfile(addr=0x1F)
+            word = self.rd_regfile(args.idx, addr=0x1F)
             print(f'INFO:  RX_PRBS_LOCKED: {int(word[15]):1d}, RX_PRBS_ERR_CNT: {int(word[0:14+1]):X}')
             if (word[15] == 0):
                 print(f'ERROR: RX PRBS did not lock')
@@ -1033,14 +1043,14 @@ class SerdesTool:
 
             if (force_err):
                 print(f'INFO:  Starting error injection')
-                self.wr_regfile(addr=0x40, data=0x0200, mask=0x0200) # TX_PRBS_FORCE_ERR=1
-                word = self.rd_regfile(addr=0x1F)
+                self.wr_regfile(idx=args.idx, addr=0x40, data=0x0200, mask=0x0200) # TX_PRBS_FORCE_ERR=1
+                word = self.rd_regfile(args.idx, addr=0x1F)
                 print(f'INFO:  RX_PRBS_LOCKED: {int(word[15]):1d}, RX_PRBS_ERR_CNT: {int(word[0:14+1]):X}')
                 if (int(word[0:14+1]) == 0):
                     print(f'ERROR: RX PRBS error detection failed')
 
-            self.wr_regfile(addr=0x2A, data=0x0210, mask=0x02F0) # RX_PRBS_CNT_RESET=1, RX_PRBS_OVR=1, RX_PRBS_SEL=0
-            self.wr_regfile(addr=0x40, data=0x0020, mask=0x01E0) # TX_PRBS_OVR=1, TX_PRBS_SEL=0
+            self.wr_regfile(idx=args.idx, addr=0x2A, data=0x0210, mask=0x02F0) # RX_PRBS_CNT_RESET=1, RX_PRBS_OVR=1, RX_PRBS_SEL=0
+            self.wr_regfile(idx=args.idx, addr=0x40, data=0x0020, mask=0x01E0) # TX_PRBS_OVR=1, TX_PRBS_SEL=0
         return
 
     def tc_uipattern(self, mode=0):
@@ -1050,7 +1060,7 @@ class SerdesTool:
             print(f'ERROR: Invalid UI pattern mode ({mode}), must be in [0,2,20,40,80]')
             return
 
-        word = self.rd_regfile(addr=0x5C)
+        word = self.rd_regfile(args.idx, addr=0x5C)
         if (word[0] != 1 or word[2] != 1):
             print(f'ERROR: SerDes not enabled or in testmode. 0x5C=0x{int(word):04X}')
             return
@@ -1065,20 +1075,20 @@ class SerdesTool:
         self.check_serdes_datapath(mode)
 
         # disable testmode?
-        self.wr_regfile(addr=0x2A, data=0x0210, mask=0x02F0) # RX_PRBS_OVR=1, RX_PRBS_SEL=0, RX_PRBS_CNT_RESET=1
+        self.wr_regfile(idx=args.idx, addr=0x2A, data=0x0210, mask=0x02F0) # RX_PRBS_OVR=1, RX_PRBS_SEL=0, RX_PRBS_CNT_RESET=1
 
         print(f'INFO:  Setting up {mode} UI square wave')
 
         i = 5 if mode == 2 else 6 if mode in [20,40,80] else 0
-        self.wr_regfile(addr=0x40, data=((i+1) << 6) | (1 << 5), mask=0x01E0) # TX_PRBS_OVR=1, TX_PRBS_SEL=i
-        word = self.rd_regfile(addr=0x40)
+        self.wr_regfile(idx=args.idx, addr=0x40, data=((i+1) << 6) | (1 << 5), mask=0x01E0) # TX_PRBS_OVR=1, TX_PRBS_SEL=i
+        word = self.rd_regfile(args.idx, addr=0x40)
         if (int(word[6:8+1]) != i+1):
             print(f'ERROR: TX PRBS mode is invalid')
 
     def tc_eyemeas(self):
         print(f'INFO:  Starting SerDes eye measurement')
 
-        word = self.rd_regfile(addr=0x5C)
+        word = self.rd_regfile(args.idx, addr=0x5C)
         if (word[0] != 1 or word[2] != 1):
             print(f'ERROR: SerDes not enabled or in testmode. 0x5C=0x{int(word):04X}')
             return
@@ -1086,7 +1096,7 @@ class SerdesTool:
     def tc_loopback(self):
         print(f'INFO:  Starting SerDes loopback testcases')
 
-        word = self.rd_regfile(addr=0x5C)
+        word = self.rd_regfile(args.idx, addr=0x5C)
         if (word[0] != 1 or word[2] != 1):
             print(f'ERROR: SerDes not enabled or in testmode. 0x5C=0x{int(word):04X}')
             return
@@ -1103,8 +1113,8 @@ class SerdesTool:
                 print(f'\nINFO:  Enabling TX PCS Loopback')
 
             # TX_LOOPBACK_OVR=1 | TX_PMA_LOOPBACK=(001=pma-drv, 011=pma-drv, 010=pma-pad, 100=pcs)
-            self.wr_regfile(addr=0x40, data=(0x0400 | (j+1) & 0x7), mask=0x0407)
-            word = self.rd_regfile(addr=0x40)
+            self.wr_regfile(idx=args.idx, addr=0x40, data=(0x0400 | (j+1) & 0x7), mask=0x0407)
+            word = self.rd_regfile(args.idx, addr=0x40)
             if (word[10] == 0):
                 print(f'ERROR: TX loopback overwrite is not enabled')
             if (int(word[0:1+1]) != j+1 and j < 3):
@@ -1114,45 +1124,45 @@ class SerdesTool:
 
             # turn tx driver off
             if (j == 1 or j == 3):
-                self.wr_regfile(addr=0x30, data=0x0000, mask=0x001F) # TODO TX_SEL_PRE=0, TX_SEL_POST=x, TX_AMP=x
-                self.wr_regfile(addr=0x31, data=0x07E0, mask=0x07E0) # TX_BRANCH_EN_MAIN=63
-                word = self.rd_regfile(addr=0x30)
+                self.wr_regfile(idx=args.idx, addr=0x30, data=0x0000, mask=0x001F) # TODO TX_SEL_PRE=0, TX_SEL_POST=x, TX_AMP=x
+                self.wr_regfile(idx=args.idx, addr=0x31, data=0x07E0, mask=0x07E0) # TX_BRANCH_EN_MAIN=63
+                word = self.rd_regfile(args.idx, addr=0x30)
                 if (int(word[0:4+1]) != 0):
                     print(f'ERROR: Invalid TX_SEL_PRE driver setting')
-                word = self.rd_regfile(addr=0x31)
+                word = self.rd_regfile(args.idx, addr=0x31)
                 if (int(word[5:10+1]) != 63):
                     print(f'ERROR: Invalid TX_BRANCH_EN_MAIN setting')
             else:
-                self.wr_regfile(addr=0x30, data=0x0001, mask=0x001F) # TODO TX_SEL_PRE=1, TX_SEL_POST=x, TX_AMP=x
-                self.wr_regfile(addr=0x31, data=0x0000, mask=0x07E0) # TX_BRANCH_EN_MAIN=0
-                word = self.rd_regfile(addr=0x30)
+                self.wr_regfile(idx=args.idx, addr=0x30, data=0x0001, mask=0x001F) # TODO TX_SEL_PRE=1, TX_SEL_POST=x, TX_AMP=x
+                self.wr_regfile(idx=args.idx, addr=0x31, data=0x0000, mask=0x07E0) # TX_BRANCH_EN_MAIN=0
+                word = self.rd_regfile(args.idx, addr=0x30)
                 if (int(word[0:4+1]) != 1):
                     print(f'ERROR: Invalid TX_SEL_PRE driver setting')
-                word = self.rd_regfile(addr=0x31)
+                word = self.rd_regfile(args.idx, addr=0x31)
                 if (int(word[5:10+1]) != 0):
                     print(f'ERROR: Invalid TX_BRANCH_EN_MAIN setting')
 
             self.start_serdes_pll(n1=1, n2=5, n3=5, outdiv=4, calib=True) # 1250 Mbit/s, PFDAC=on
             self.reset_serdes_trx()
 
-            self.wr_regfile(addr=0x41, data=0x00C0, mask=0x00C0) # TX_8B10B_EN_OVR=1, TX_8B10B_EN=1
-            self.wr_regfile(addr=0x2B, data=0xC000, mask=0xC000) # RX_8B10B_EN_OVR=1, RX_8B10B_EN=1
+            self.wr_regfile(idx=args.idx, addr=0x41, data=0x00C0, mask=0x00C0) # TX_8B10B_EN_OVR=1, TX_8B10B_EN=1
+            self.wr_regfile(idx=args.idx, addr=0x2B, data=0xC000, mask=0xC000) # RX_8B10B_EN_OVR=1, RX_8B10B_EN=1
 
             # 32-Bit comma alignment test
-            self.wr_regfile(addr=0x12, data=0x3000, mask=0x3000) # RX_ALIGN_COMMA_WORD=3 (32 bit)
+            self.wr_regfile(idx=args.idx, addr=0x12, data=0x3000, mask=0x3000) # RX_ALIGN_COMMA_WORD=3 (32 bit)
 
             # NOTE: Please define position of the k-word using the `TX_CHAR_IS_K_I` input: set to 8'h0000_0001
             #self.wr_regfile_tx_data(data=0x1284A1284A1284A128BC) # 64'h4A4A4A4A_4A4A4ABC
 
-            self.wr_regfile(addr=0x11, data=0x0C00, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=1
-            self.wr_regfile(addr=0x12, data=0x0C00, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=1
-            self.wr_regfile(addr=0x13, data=0x3000, mask=0x3000) # RX_COMMA_DETECT_EN_OVR=1, RX_COMMA_DETECT_EN=1
+            self.wr_regfile(idx=args.idx, addr=0x11, data=0x0C00, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=1
+            self.wr_regfile(idx=args.idx, addr=0x12, data=0x0C00, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=1
+            self.wr_regfile(idx=args.idx, addr=0x13, data=0x3000, mask=0x3000) # RX_COMMA_DETECT_EN_OVR=1, RX_COMMA_DETECT_EN=1
 
             print(f'INFO:  Sending data (this might take a while) ...')
             sleep(2)
 
-            self.wr_regfile(addr=0x11, data=0x0000, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=0
-            self.wr_regfile(addr=0x12, data=0x0000, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=0
+            self.wr_regfile(idx=args.idx, addr=0x11, data=0x0000, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=0
+            self.wr_regfile(idx=args.idx, addr=0x12, data=0x0000, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=0
 
             print(f'INFO:  Checking 32-Bit comma alignment')
             rx_data, _ = self.rd_regfile_rx_data()
@@ -1166,20 +1176,20 @@ class SerdesTool:
 
             # 16-Bit comma alignment test
             self.reset_serdes_trx()
-            self.wr_regfile(addr=0x12, data=0x1000, mask=0x3000) # RX_ALIGN_COMMA_WORD=1 (16 bit)
+            self.wr_regfile(idx=args.idx, addr=0x12, data=0x1000, mask=0x3000) # RX_ALIGN_COMMA_WORD=1 (16 bit)
 
             # NOTE: Please define position of the k-word using the `TX_CHAR_IS_K_I` input: set to 8'h0000_0001
             self.wr_regfile_tx_data(data=0x1284A1284A1284A128BC) # 64'h4A4A4A4A_4A4A4ABC
 
-            self.wr_regfile(addr=0x11, data=0x0C00, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=1
-            self.wr_regfile(addr=0x12, data=0x0C00, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=1
-            self.wr_regfile(addr=0x13, data=0x3000, mask=0x3000) # RX_COMMA_DETECT_EN_OVR=1, RX_COMMA_DETECT_EN=1
+            self.wr_regfile(idx=args.idx, addr=0x11, data=0x0C00, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=1
+            self.wr_regfile(idx=args.idx, addr=0x12, data=0x0C00, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=1
+            self.wr_regfile(idx=args.idx, addr=0x13, data=0x3000, mask=0x3000) # RX_COMMA_DETECT_EN_OVR=1, RX_COMMA_DETECT_EN=1
 
             print(f'INFO:  Sending data (this might take a while) ...')
             sleep(2)
 
-            self.wr_regfile(addr=0x11, data=0x0000, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=0
-            self.wr_regfile(addr=0x12, data=0x0000, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=0
+            self.wr_regfile(idx=args.idx, addr=0x11, data=0x0000, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=0
+            self.wr_regfile(idx=args.idx, addr=0x12, data=0x0000, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=0
 
             print(f'INFO:  Checking 16-Bit comma alignment')
             rx_data, _ = self.rd_regfile_rx_data()
@@ -1197,20 +1207,20 @@ class SerdesTool:
 
             # 8-Bit comma alignment test
             self.reset_serdes_trx()
-            self.wr_regfile(addr=0x12, data=0x0000, mask=0x3000) # RX_ALIGN_COMMA_WORD=0 (8 bit)
+            self.wr_regfile(idx=args.idx, addr=0x12, data=0x0000, mask=0x3000) # RX_ALIGN_COMMA_WORD=0 (8 bit)
 
             # NOTE: Please define position of the k-word using the `TX_CHAR_IS_K_I` input: set to 8'h0000_0001
             self.wr_regfile_tx_data(data=0x1284A1284A1284A128BC) # 64'h4A4A4A4A_4A4A4ABC
 
-            self.wr_regfile(addr=0x11, data=0x0C00, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=1
-            self.wr_regfile(addr=0x12, data=0x0C00, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=1
-            self.wr_regfile(addr=0x13, data=0x3000, mask=0x3000) # RX_COMMA_DETECT_EN_OVR=1, RX_COMMA_DETECT_EN=1
+            self.wr_regfile(idx=args.idx, addr=0x11, data=0x0C00, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=1
+            self.wr_regfile(idx=args.idx, addr=0x12, data=0x0C00, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=1
+            self.wr_regfile(idx=args.idx, addr=0x13, data=0x3000, mask=0x3000) # RX_COMMA_DETECT_EN_OVR=1, RX_COMMA_DETECT_EN=1
 
             print(f'INFO:  Sending data (this might take a while) ...')
             sleep(2)
 
-            self.wr_regfile(addr=0x11, data=0x0000, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=0
-            self.wr_regfile(addr=0x12, data=0x0000, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=0
+            self.wr_regfile(idx=args.idx, addr=0x11, data=0x0000, mask=0x0C00) # RX_MCOMMA_ALIGN_OVR=1, RX_MCOMMA_ALIGN=0
+            self.wr_regfile(idx=args.idx, addr=0x12, data=0x0000, mask=0x0C00) # RX_PCOMMA_ALIGN_OVR=1, RX_PCOMMA_ALIGN=0
 
             print(f'INFO:  Checking 8-Bit comma alignment')
             rx_data, _ = self.rd_regfile_rx_data()
@@ -1236,7 +1246,7 @@ class SerdesTool:
 
     def calc_rxterm_vcm(self, vddio=1.0, vcmsel=None) -> float:
         if vcmsel is None:
-            vcmsel = self.rd_regfile(addr=0x02)
+            vcmsel = self.rd_regfile(args.idx, addr=0x02)
             vcmsel = int(vcmsel[11:13+1])
         return (vcmsel/29) * vddio
 
@@ -1247,7 +1257,7 @@ class SerdesTool:
                 #for param in self.regfile.fields:
                 #    self.regfile.fields[param]['val'] = random.randint(0, 16)
                 for addr in chain(range(0x00, 0x30), range(0x30, 0x43), range(0x50, 0x5D)):
-                    word = self.rd_regfile(addr)
+                    word = self.rd_regfile(args.idx, addr)
                     filtered_entries = {key: value for key, value in self.regfile.fields.items() if value['addr'] == addr}
                     for (key, value) in filtered_entries.items():
                         val = word[value['lbit']:value['hbit']+1]
@@ -1538,7 +1548,7 @@ if __name__ == '__main__':
 
         p.add_argument('-l', '--list', dest='listdev', action='store_true', help='list available boards/programmers and exit')
         p.add_argument('-b', dest='board', type=str, metavar=Boards_e, default=Boards_e[0], required=False, help='select board (default: %(default)s)')
-        p.add_argument('--index-chain', dest='idx', default=0, required=False, help='device index in JTAG chain (default: %(default)s)')
+        p.add_argument('--index-chain', dest='idx', type=int, default=0, required=False, help='device index in JTAG chain (default: %(default)s)')
         p.add_argument('--freq', type=ArgHzRegex, default='20M', metavar="[0 - 30M]", required=False, help='frequency setting; append "k" to the argument for kilohertz or "M" for megahertz (default: %(default)s)')
         p.add_argument('-m', dest='genmod', type=str, required=False, help='generate verilog or vhdl module and exit; specify the file format with extension .v or .vhd')
         p.add_argument('--refclk', dest='refclk', type=float, default=100e6, help='serdes reference clock frequency (default: %(default)s)')
