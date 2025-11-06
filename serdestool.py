@@ -1453,8 +1453,8 @@ class SerdesTool:
                     if min_value <= entered_value <= max_value:
                         with self.param_lock:
                             #data['val'] = entered_value  # Apply change if within range
-                            self._tool.wr_serdes_regfile(addr=addr, data=entered_value << lbit, mask=mask, wren=1)
-                            self._tool.rd_serdes_regfile()
+                            self._tool.wr_serdes_regfile(idx=args.idx, addr=addr, data=entered_value << lbit, mask=mask, wren=1)
+                            self._tool.rd_serdes_regfile(idx=args.idx)
                         break
                     else:
                         win.addstr(6, 2, "Out of range! Try again.", curses.A_BOLD | curses.color_pair(3))
