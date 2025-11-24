@@ -83,7 +83,7 @@ def FindAndFormatFtdiAddr(idx=0) -> str:
 class ColorFormatter:
     pos_cond = ["DONE", "PRESENT", "LOCKED", "IS_ALIGNED", "EN_ADPLL_CTRL", "CONFIG_SEL", "SERDES_ENABLE"]
     neg_cond = ["ERR", "DOWN", "TESTMODE"]
-    ovr_cond = ["OVR"]
+    ovr_cond = ["OVR", "LOOPBACK"]
 
     @staticmethod
     def get_color_pair(key, value):
@@ -1459,12 +1459,12 @@ class SerdesTool:
                     else:
                         win.addstr(6, 2, "Out of range! Try again.", curses.A_BOLD | curses.color_pair(3))
                         win.refresh()
-                        time.sleep(1)
+                        sleep(1)
                         win.addstr(6, 2, " " * 30)  # Clear error message
                 except ValueError:
                     win.addstr(6, 2, "Invalid input!", curses.A_BOLD | curses.color_pair(3))
                     win.refresh()
-                    time.sleep(1)
+                    sleep(1)
                     win.addstr(6, 2, " " * 30)  # Clear error message
             elif key in (curses.KEY_BACKSPACE, 127):
                 new_val = new_val[:-1]
