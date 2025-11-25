@@ -78,7 +78,10 @@ def FindAndFormatFtdiAddr(idx=0) -> str:
     if not d:
         raise Exception('Error: No FTDI device found.')
     d = d[idx][0]
-    return f'ftdi://ftdi:{ftdiname[d[1]]}/1'
+    if args.serial:
+        return f'ftdi://ftdi:{ftdiname[d[1]]}:{args.serial}/1'
+    else:
+        return f'ftdi://ftdi:{ftdiname[d[1]]}/1'
 
 class ColorFormatter:
     pos_cond = ["DONE", "PRESENT", "LOCKED", "IS_ALIGNED", "EN_ADPLL_CTRL", "CONFIG_SEL", "SERDES_ENABLE"]
@@ -1321,9 +1324,9 @@ class SerdesTool:
             PLL_FCNTRL = self.regfile.fields.get("PLL_FCNTRL", {}).get("val", 0x0)
             data_path_clock = (args.refclk * N1 * N2 * N3) / (self.olclkg[PLL_FCNTRL] * AddDiv) if None not in (N1, N2, N3, OUTDIV, AddDiv) else None
 
-            refclk_str = f"Reference Clock: {args.refclk / 1e6:.2f} MHz"
-            bit_rate_str = f"Bit Rate Clock: {bit_rate_clock / 1e6:.2f} MHz" if bit_rate_clock else "Invalid PLL Config"
-            data_path_str = f"TX Data Path Clock: {data_path_clock / 1e6:.2f} MHz" if data_path_clock else "Invalid Data Path Config"
+            refclk_str = f"Reference Clock: {args.refclk / 1e6:.3f} MHz"
+            bit_rate_str = f"Bit Rate Clock: {bit_rate_clock / 1e6:.3f} MHz" if bit_rate_clock else "Invalid PLL Config"
+            data_path_str = f"TX Data Path Clock: {data_path_clock / 1e6:.3f} MHz" if data_path_clock else "Invalid Data Path Config"
 
             # Extract RX data
             word80 = self.regfile.fields.get("RX_DATA[79:64]", {}).get("val", 0x0)
@@ -1548,6 +1551,7 @@ if __name__ == '__main__':
 
         p.add_argument('-l', '--list', dest='listdev', action='store_true', help='list available boards/programmers and exit')
         p.add_argument('-b', dest='board', type=str, metavar=Boards_e, default=Boards_e[0], required=False, help='select board (default: %(default)s)')
+        p.add_argument('--serial', dest='serial', type=str, required=False, help='FTDI serial number')
         p.add_argument('--index-chain', dest='idx', type=int, default=0, required=False, help='device index in JTAG chain (default: %(default)s)')
         p.add_argument('--freq', type=ArgHzRegex, default='20M', metavar="[0 - 30M]", required=False, help='frequency setting; append "k" to the argument for kilohertz or "M" for megahertz (default: %(default)s)')
         p.add_argument('-m', dest='genmod', type=str, required=False, help='generate verilog or vhdl module and exit; specify the file format with extension .v or .vhd')
