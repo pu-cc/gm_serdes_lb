@@ -311,7 +311,7 @@ class SerdesTool:
         'RX_SLIDE[0]':              {'addr': 0x13, 'mode': 'R/W', 'hbit': 14, 'lbit': 14, 'val': 0},
         'RX_SLIDE[1]':              {'addr': 0x13, 'mode': 'W/C', 'hbit': 15, 'lbit': 15, 'val': 0},
         'RX_EYE_MEAS_EN':           {'addr': 0x14, 'mode': 'W/C', 'hbit':  0, 'lbit':  0, 'val': 0},
-        'RX_EYE_MEAS_CFG':          {'addr': 0x14, 'mode': 'R/W', 'hbit': 15, 'lbit':  1, 'val': 0},
+        'RX_EYE_MEAS_CFG':          {'addr': 0x14, 'mode': 'R/W', 'hbit': 15, 'lbit':  4, 'val': 0},
         'RX_MON_PH_OFFSET':         {'addr': 0x15, 'mode': 'R/W', 'hbit':  5, 'lbit':  0, 'val': 0},
         'RX_EYE_MEAS_CORRECT_11S':  {'addr': 0x16, 'mode': 'R',   'hbit': 15, 'lbit':  0, 'val': 0},
         'RX_EYE_MEAS_WRONG_11S':    {'addr': 0x17, 'mode': 'R',   'hbit': 15, 'lbit':  0, 'val': 0},
