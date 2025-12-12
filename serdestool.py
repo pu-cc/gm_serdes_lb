@@ -1312,21 +1312,49 @@ class SerdesTool:
             bit_rate_clock = 2 * args.refclk * N1 * N2 * N3 / OUTDIV if None not in (N1, N2, N3, OUTDIV) else None
 
             # Decode TX_DATAPATH_SEL
-            datapath_mode = (TX_DATAPATH_SEL & 0b10) >> 1  # Extract MSB
-            is_64_bit = datapath_mode == 1  # If `1x`, it is 64-bit
+            if (TX_DATAPATH_SEL == 0):
+                datapath_width = 20
+            elif (TX_DATAPATH_SEL == 1):
+                datapath_width = 40
+            else:
+                datapath_width = 80
 
             # Determine AddDiv based on OUTDIV
-            if is_64_bit:
+            if datapath_width == 80:
                 AddDiv = {0b00: 2, 0b01: 4, 0b11: 8}.get(PLL_OUT_DIVSEL, None)
             else:
                 AddDiv = {0b00: 1, 0b01: 2, 0b11: 4}.get(PLL_OUT_DIVSEL, None)
 
             PLL_FCNTRL = self.regfile.fields.get("PLL_FCNTRL", {}).get("val", 0x0)
-            data_path_clock = (args.refclk * N1 * N2 * N3) / (self.olclkg[PLL_FCNTRL] * AddDiv) if None not in (N1, N2, N3, OUTDIV, AddDiv) else None
+            fDCO = args.refclk * N1 * N2 * N3
+            data_path_clock = fDCO / (self.olclkg[PLL_FCNTRL] * AddDiv) if None not in (N1, N2, N3, OUTDIV, AddDiv) else None
 
-            refclk_str = f"Reference Clock: {args.refclk / 1e6:.3f} MHz"
-            bit_rate_str = f"Bit Rate Clock: {bit_rate_clock / 1e6:.3f} MHz" if bit_rate_clock else "Invalid PLL Config"
+            refclk_str =    f"Reference Clock: {args.refclk / 1e6:.3f} MHz"
+            dcoclk_str =    f"DCO Frequency:  {fDCO / 1e6:.3f} MHz"
+            bit_rate_str =  f"Bit Rate Clock: {bit_rate_clock / 1e6:.3f} MHz" if bit_rate_clock else "Invalid PLL Config"
             data_path_str = f"TX Data Path Clock: {data_path_clock / 1e6:.3f} MHz" if data_path_clock else "Invalid Data Path Config"
+
+            txuc = (self.regfile.fields.get("TX_TAIL_CASCODE", {}).get("val", 0) + 10) * (self.regfile.fields.get("TX_AMP", {}).get("val", 0) + 1) * 9.375 # uA
+
+            branch_pre  = self.regfile.fields.get("TX_BRANCH_EN_PRE", {}).get("val", 0x0)
+            brach_main  = self.regfile.fields.get("TX_BRANCH_EN_MAIN", {}).get("val", 0x0)
+            branch_post = self.regfile.fields.get("TX_BRANCH_EN_POST", {}).get("val", 0x0)
+
+            total_number_of_branches = branch_pre + brach_main + branch_post
+            pre_cursor  = self.regfile.fields.get("TX_SEL_PRE", {}).get("val", 0x0)
+            post_cursor = self.regfile.fields.get("TX_SEL_POST", {}).get("val", 0x0)
+            main_cursor = total_number_of_branches - pre_cursor - post_cursor
+
+            vd = total_number_of_branches * txuc * 0.000001 * 50 # Ohm
+            vb = (main_cursor - pre_cursor - post_cursor) * txuc * 0.000001 * 50 # Ohm
+            vc = (main_cursor + pre_cursor - post_cursor) * txuc * 0.000001 * 50 # Ohm
+            va = (main_cursor - pre_cursor + post_cursor) * txuc * 0.000001 * 50 # Ohm
+
+            txuc_str = f"TX Unit Current:      {txuc} uA"
+            txvd_str = f"TX Boost Voltage:     {vd:.3f} V"
+            txvc_str = f"TX De-emph. Voltage:  {vc:.3f} V"
+            txvb_str = f"TX Pre-emph. Voltage: {vb:.3f} V"
+            txva_str = f"TX Signal Voltage:    {va:.3f} V"
 
             # Extract RX data
             word80 = self.regfile.fields.get("RX_DATA[79:64]", {}).get("val", 0x0)
@@ -1334,7 +1362,7 @@ class SerdesTool:
             word80 = (word80 << 16) | self.regfile.fields.get("RX_DATA[47:32]", {}).get("val", 0x0)
             word80 = (word80 << 16) | self.regfile.fields.get("RX_DATA[31:16]", {}).get("val", 0x0)
             word80 = (word80 << 16) | self.regfile.fields.get("RX_DATA[15:0]",  {}).get("val", 0x0)
-            rx_data_80bit_str = f"RX_DATA[79:0]: 0x{word80:020X}"
+            rx_data_80bit_str = f"RX_DATA[79:0]: 0x{word80:0{int(datapath_width/4)}X}"
 
             word64 = 0
             for bit_offset in range(0, 80, 10):
@@ -1374,11 +1402,18 @@ class SerdesTool:
                             # Print value in color
                             stdscr.addstr(y_pos, x_pos + max_name_length + 1, f"{formatted_value:<8}", curses.color_pair(color_pair))
 
-            stdscr.addstr(max_y - 9, 2, refclk_str)
-            stdscr.addstr(max_y - 8, 2, bit_rate_str)
-            stdscr.addstr(max_y - 7, 2, data_path_str)
-            stdscr.addstr(max_y - 5, 2, rx_data_80bit_str)
-            stdscr.addstr(max_y - 4, 2, rx_data_64bit_str)
+            stdscr.addstr(max_y - 10, 2, refclk_str)
+            stdscr.addstr(max_y -  9, 2, dcoclk_str)
+            stdscr.addstr(max_y -  8, 2, bit_rate_str)
+            stdscr.addstr(max_y -  7, 2, data_path_str)
+            stdscr.addstr(max_y -  5, 2, rx_data_80bit_str)
+            stdscr.addstr(max_y -  4, 2, rx_data_64bit_str)
+
+            stdscr.addstr(max_y - 10, 60, txuc_str)
+            stdscr.addstr(max_y -  9, 60, txvd_str)
+            stdscr.addstr(max_y -  8, 60, txvc_str)
+            stdscr.addstr(max_y -  7, 60, txvb_str)
+            stdscr.addstr(max_y -  6, 60, txva_str)
 
             search_hint = "[n] Next match  |  " if search_results else ""
             stdscr.addstr(max_y - 2, 2, f"{search_hint}[Arrow Keys] Navigate | [Enter] Edit | [/] Find | [h] Toggle HEX/DEC | [q] Quit", curses.A_BOLD)
@@ -1390,7 +1425,7 @@ class SerdesTool:
             except curses.error:
                 key = -1  # No input
 
-            if key == ord("h"):
+            if key == ord("h") or key == ord("d"):
                 show_hex = not show_hex
             elif key == curses.KEY_UP and selected_index - 1 >= 0:
                 selected_index -= 1
@@ -1412,8 +1447,23 @@ class SerdesTool:
             elif key == ord("n") and search_results:
                 search_index = (search_index + 1) % len(search_results)
                 selected_index = search_results[search_index]
+            elif key == ord("r"):
+                self.push_button(self.regfile.fields["RX_PRBS_CNT_RESET"])
+            elif key == ord("b"):
+                self.push_button(self.regfile.fields["RX_SLIDE"])
+            elif key == ord("a"):
+                self.push_button(self.regfile.fields["TX_PRBS_SEL"], 2)
+            elif key == ord("s"):
+                self.push_button(self.regfile.fields["RX_PRBS_SEL"], 2)
             elif key == ord("q"):
                 break
+
+    def push_button(self, field, val=1):
+        hbit, lbit = field['hbit'], field['lbit']
+        mask = ((1 << (hbit - lbit + 1)) - 1) << lbit
+        addr = field['addr']
+        self._tool.wr_serdes_regfile(idx=args.idx, addr=addr, data=int(val) << lbit, mask=mask, wren=1)
+        self._tool.rd_serdes_regfile(idx=args.idx)
 
     def edit_value_popup(self, stdscr, param):
         name, data = param
