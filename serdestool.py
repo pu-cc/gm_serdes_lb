@@ -1330,8 +1330,8 @@ class SerdesTool:
             data_path_clock = fDCO / (self.olclkg[PLL_FCNTRL] * AddDiv) if None not in (N1, N2, N3, OUTDIV, AddDiv) else None
 
             refclk_str =    f"Reference Clock: {args.refclk / 1e6:.3f} MHz"
-            dcoclk_str =    f"DCO Frequency:  {fDCO / 1e6:.3f} MHz"
-            bit_rate_str =  f"Bit Rate Clock: {bit_rate_clock / 1e6:.3f} MHz" if bit_rate_clock else "Invalid PLL Config"
+            dcoclk_str =    f"DCO Frequency:   {fDCO / 1e6:.3f} MHz"
+            bit_rate_str =  f"Bit Rate Clock:  {bit_rate_clock / 1e6:.3f} MHz" if bit_rate_clock else "Invalid PLL Config"
             data_path_str = f"TX Data Path Clock: {data_path_clock / 1e6:.3f} MHz" if data_path_clock else "Invalid Data Path Config"
 
             txuc = (self.regfile.fields.get("TX_TAIL_CASCODE", {}).get("val", 0) + 10) * (self.regfile.fields.get("TX_AMP", {}).get("val", 0) + 1) * 9.375 # uA
@@ -1455,6 +1455,10 @@ class SerdesTool:
                 self.push_button(self.regfile.fields["TX_PRBS_SEL"], 2)
             elif key == ord("s"):
                 self.push_button(self.regfile.fields["RX_PRBS_SEL"], 2)
+            elif key == ord("+"):
+                self.push_inc(param_list[selected_index])
+            elif key == ord("-"):
+                self.push_dec(param_list[selected_index])
             elif key == ord("q"):
                 break
 
@@ -1463,6 +1467,26 @@ class SerdesTool:
         mask = ((1 << (hbit - lbit + 1)) - 1) << lbit
         addr = field['addr']
         self._tool.wr_serdes_regfile(idx=args.idx, addr=addr, data=int(val) << lbit, mask=mask, wren=1)
+        self._tool.rd_serdes_regfile(idx=args.idx)
+
+    def push_inc(self, param):
+        name, data = param
+
+        hbit, lbit = data['hbit'], data['lbit']
+        mask = ((1 << (hbit - lbit + 1)) - 1) << lbit
+        addr = data['addr']
+
+        self._tool.wr_serdes_regfile(idx=args.idx, addr=addr, data=int(data['val'])+1 << lbit, mask=mask, wren=1)
+        self._tool.rd_serdes_regfile(idx=args.idx)
+
+    def push_dec(self, param):
+        name, data = param
+
+        hbit, lbit = data['hbit'], data['lbit']
+        mask = ((1 << (hbit - lbit + 1)) - 1) << lbit
+        addr = data['addr']
+
+        self._tool.wr_serdes_regfile(idx=args.idx, addr=addr, data=int(data['val'])-1 << lbit, mask=mask, wren=1)
         self._tool.rd_serdes_regfile(idx=args.idx)
 
     def edit_value_popup(self, stdscr, param):
