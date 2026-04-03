@@ -477,7 +477,7 @@ class SerdesTool:
         'PLL_MAIN_DIVSEL':          {'addr': 0x51, 'mode': 'R/W', 'hbit': 11, 'lbit':  6, 'val': 27},
         'PLL_OUT_DIVSEL':           {'addr': 0x51, 'mode': 'R/W', 'hbit': 13, 'lbit': 12, 'val': 0},
         'PLL_CI':                   {'addr': 0x52, 'mode': 'R/W', 'hbit':  4, 'lbit':  0, 'val': 3},
-        'PLL_CP':                   {'addr': 0x52, 'mode': 'R/W', 'hbit': 14, 'lbit':  5, 'val': 80},
+        'PLL_CP':                   {'addr': 0x52, 'mode': 'R/W', 'hbit': 14, 'lbit':  5, 'val': 60},
         'PLL_AO':                   {'addr': 0x53, 'mode': 'R/W', 'hbit':  3, 'lbit':  0, 'val': 0},
         'PLL_SCAP':                 {'addr': 0x53, 'mode': 'R/W', 'hbit':  6, 'lbit':  4, 'val': 0},
         'PLL_FILTER_SHIFT':         {'addr': 0x53, 'mode': 'R/W', 'hbit':  8, 'lbit':  7, 'val': 2},
@@ -1329,10 +1329,10 @@ class SerdesTool:
             fDCO = args.refclk * N1 * N2 * N3
             data_path_clock = fDCO / (self.olclkg[PLL_FCNTRL] * AddDiv) if None not in (N1, N2, N3, OUTDIV, AddDiv) else None
 
-            refclk_str =    f"Reference Clock: {args.refclk / 1e6:.3f} MHz"
+            refclk_str =    f"Reference Clock:  {args.refclk / 1e6:.3f} MHz"
             dcoclk_str =    f"DCO Frequency:   {fDCO / 1e6:.3f} MHz"
             bit_rate_str =  f"Bit Rate Clock:  {bit_rate_clock / 1e6:.3f} MHz" if bit_rate_clock else "Invalid PLL Config"
-            data_path_str = f"TX Data Path Clock: {data_path_clock / 1e6:.3f} MHz" if data_path_clock else "Invalid Data Path Config"
+            data_path_str = f"TX Datapath Clock: {data_path_clock / 1e6:.3f} MHz" if data_path_clock else "Invalid Data Path Config"
 
             txuc = (self.regfile.fields.get("TX_TAIL_CASCODE", {}).get("val", 0) + 10) * (self.regfile.fields.get("TX_AMP", {}).get("val", 0) + 1) * 9.375 # uA
 
@@ -1352,9 +1352,14 @@ class SerdesTool:
 
             txuc_str = f"TX Unit Current:      {txuc} uA"
             txvd_str = f"TX Boost Voltage:     {vd:.3f} V"
-            txvc_str = f"TX De-emph. Voltage:  {vc:.3f} V"
-            txvb_str = f"TX Pre-emph. Voltage: {vb:.3f} V"
+            txvc_str = f"TX Pre-emph. Voltage: {vc:.3f} V"
+            txvb_str = f"TX De-emph. Voltage:  {vb:.3f} V"
             txva_str = f"TX Signal Voltage:    {va:.3f} V"
+
+            vcm_sel = self.regfile.fields.get("RX_RTERM_VCMSEL", {}).get("val", 0x0)
+            rx_rterm_vcm = args.vcore * (18 + vcm_sel) / 29
+
+            rx_rterm_vcm_str = f"RX RTERM VCM:     {rx_rterm_vcm:.3f} V"
 
             # Extract RX data
             word80 = self.regfile.fields.get("RX_DATA[79:64]", {}).get("val", 0x0)
@@ -1415,6 +1420,8 @@ class SerdesTool:
             stdscr.addstr(max_y -  7, 60, txvb_str)
             stdscr.addstr(max_y -  6, 60, txva_str)
 
+            stdscr.addstr(max_y - 10, 100, rx_rterm_vcm_str)
+
             search_hint = "[n] Next match  |  " if search_results else ""
             stdscr.addstr(max_y - 2, 2, f"{search_hint}[Arrow Keys] Navigate | [Enter] Edit | [/] Find | [h] Toggle HEX/DEC | [q] Quit", curses.A_BOLD)
 
@@ -1459,6 +1466,8 @@ class SerdesTool:
                 self.push_inc(param_list[selected_index])
             elif key == ord("-"):
                 self.push_dec(param_list[selected_index])
+            elif key == ord("p"):
+                self.push_dec([None, self.regfile.fields["PLL_EN_ADPLL_CTRL"]])
             elif key == ord("q"):
                 break
 
@@ -1630,6 +1639,7 @@ if __name__ == '__main__':
         p.add_argument('--freq', type=ArgHzRegex, default='20M', metavar="[0 - 30M]", required=False, help='frequency setting; append "k" to the argument for kilohertz or "M" for megahertz (default: %(default)s)')
         p.add_argument('-m', dest='genmod', type=str, required=False, help='generate verilog or vhdl module and exit; specify the file format with extension .v or .vhd')
         p.add_argument('--refclk', dest='refclk', type=float, default=100e6, help='serdes reference clock frequency (default: %(default)s)')
+        p.add_argument('--vcore', dest='vcore', type=float, default=1.1, help='core voltage (default: %(default)s)')
         p.add_argument('--rdregrx', dest='rdregrx', action='store_true', help='read rx regfile')
         p.add_argument('--rdregrxdata', dest='rdregrxdata', action='store_true', help='read rx data')
         p.add_argument('--rdregtx', dest='rdregtx', action='store_true', help='read tx regfile')
