@@ -366,7 +366,7 @@ class SerdesTool:
         'RX_BUF_RESET':             {'addr': 0x2B, 'mode': 'W/C', 'hbit':  9, 'lbit':  9, 'val': 0},
         'RX_RESET_OVR':             {'addr': 0x2B, 'mode': 'R/W', 'hbit': 10, 'lbit': 10, 'val': 0},
         'RX_RESET':                 {'addr': 0x2B, 'mode': 'W/C', 'hbit': 11, 'lbit': 11, 'val': 0},
-        'RX_POLARITY_OVR'           {'addr': 0x2B, 'mode': 'R/W', 'hbit': 12, 'lbit': 12, 'val': 0},
+        'RX_POLARITY_OVR':          {'addr': 0x2B, 'mode': 'R/W', 'hbit': 12, 'lbit': 12, 'val': 0},
         'RX_POLARITY':              {'addr': 0x2B, 'mode': 'R/W', 'hbit': 13, 'lbit': 13, 'val': 0},
         'RX_8B10B_EN_OVR':          {'addr': 0x2B, 'mode': 'R/W', 'hbit': 14, 'lbit': 14, 'val': 0},
         'RX_8B10B_EN':              {'addr': 0x2B, 'mode': 'R/W', 'hbit': 15, 'lbit': 15, 'val': 0},
@@ -622,6 +622,12 @@ class SerdesTool:
                 self.configure()
             self._tool.idcode()
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self._jtag.close()
+
     def configure(self):
         if self._board == Boards_e[0]: # auto
             self._jtag.configure(FindAndFormatFtdiAddr(0))
@@ -629,7 +635,6 @@ class SerdesTool:
             self._jtag.configure('ftdi://ftdi:232h/1')
         elif self._board == Boards_e[2]: # evb
             self._jtag.configure('ftdi://ftdi:2232h/1')
-
         self._jtag.reset()
         self._tool = JtagTool(self._jtag)
 
@@ -1662,37 +1667,36 @@ if __name__ == '__main__':
                 print(*line)
             sys.exit()
 
-        s = SerdesTool(args, jtag, hwinit=not args.genmod)
+        with SerdesTool(args, jtag, hwinit=not args.genmod) as s:
+            if args.genmod is not None:
+                filename = args.genmod.lower()
+                if filename.endswith('.v') or filename.endswith('.sv'):
+                    s.gen_module_vlog(filename)
+                elif filename.endswith('.vhd') or filename.endswith('.vhdl'):
+                    s.gen_module_vhdl(filename)
+                sys.exit()
 
-        if args.genmod is not None:
-            filename = args.genmod.lower()
-            if filename.endswith('.v') or filename.endswith('.sv'):
-                s.gen_module_vlog(filename)
-            elif filename.endswith('.vhd') or filename.endswith('.vhdl'):
-                s.gen_module_vhdl(filename)
-            sys.exit()
-
-        if args.gui:
-            update_thread = threading.Thread(target=s.update_values, daemon=True)
-            update_thread.start()
-            curses.wrapper(s.draw_parameters)
-        else:
-            if args.tcprbs:
-                s.tc_prbs(force_err=True)
-            if args.tcloopback:
-                s.tc_loopback()
-            if args.tcuipattern is not None:
-                s.tc_uipattern(int(args.tcuipattern))
-            if args.rdregrx:
-                s.rd_regfile_rx(verbose=2)
-            if args.rdregrxdata:
-                s.print_regfile_rx_data(verbose=2)
-            if args.rdregtx:
-                s.rd_regfile_tx(verbose=2)
-            if args.rdregpll:
-                s.rd_regfile_pll(verbose=2)
-            if args.rdstatuspll:
-                [s._tool.rd_status_pll(pll=i, verbose=1) for i in range(4)]
+            if args.gui:
+                update_thread = threading.Thread(target=s.update_values, daemon=True)
+                update_thread.start()
+                curses.wrapper(s.draw_parameters)
+            else:
+                if args.tcprbs:
+                    s.tc_prbs(force_err=True)
+                if args.tcloopback:
+                    s.tc_loopback()
+                if args.tcuipattern is not None:
+                    s.tc_uipattern(int(args.tcuipattern))
+                if args.rdregrx:
+                    s.rd_regfile_rx(verbose=2)
+                if args.rdregrxdata:
+                    s.print_regfile_rx_data(verbose=2)
+                if args.rdregtx:
+                    s.rd_regfile_tx(verbose=2)
+                if args.rdregpll:
+                    s.rd_regfile_pll(verbose=2)
+                if args.rdstatuspll:
+                    [s._tool.rd_status_pll(pll=i, verbose=1) for i in range(4)]
 
     except Exception as e:
         print(e)
