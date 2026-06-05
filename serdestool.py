@@ -83,6 +83,29 @@ def FindAndFormatFtdiAddr(idx=0) -> str:
     else:
         return f'ftdi://ftdi:{ftdiname[d[1]]}/1'
 
+def ReadCfgFile(filename) -> bytes:
+    lst = ['.bit', '.bin']
+    binarytype = any(x in filename for x in lst)
+    cfg_bin = bytes()
+
+    if binarytype:
+        f = open(filename, mode='rb')
+        cfg_bin = f.read()
+    else:
+        f = open(filename, mode='r')
+        lines = list(f)
+        hexstr = str()
+
+        for i in range(len(lines)):
+            s = lines[i].split('//')
+            if s[0] != '' and s[0] != '\n':
+                hexstr += s[0].strip()
+        # build bytearray
+        cfg_bin = bytes.fromhex(hexstr)
+
+    f.close()
+    return cfg_bin
+
 class ColorFormatter:
     pos_cond = ["DONE", "PRESENT", "LOCKED", "IS_ALIGNED", "EN_ADPLL_CTRL", "CONFIG_SEL", "SERDES_ENABLE"]
     neg_cond = ["ERR", "DOWN", "TESTMODE"]
@@ -175,6 +198,7 @@ class JtagTool:
 
         self.write_ir(BitSequence(self.CMD_JTAG_CONFIGURE, msb=True), idx)
         self.write_dr(seq, idx)
+
         self._engine.go_idle()
 
     def wr_serdes_regfile(self, idx, addr, data, mask, wren):
@@ -505,7 +529,9 @@ class SerdesTool:
         'PLL_BISC_DLY_PFD_MON_REF': {'addr': 0x59, 'mode': 'R/W', 'hbit':  4, 'lbit':  0, 'val': 0},
         'PLL_BISC_DLY_PFD_MON_DIV': {'addr': 0x59, 'mode': 'R/W', 'hbit':  9, 'lbit':  5, 'val': 2},
         'PLL_BISC_TIMER_DONE':      {'addr': 0x5A, 'mode': 'R',   'hbit':  0, 'lbit':  0, 'val': 0},
-        'PLL_BISC_CP':              {'addr': 0x5A, 'mode': 'R',   'hbit':  7, 'lbit':  1, 'val': 0}, # BISC_RESULT[15:1]
+        'PLL_BISC_CP_VALID':        {'addr': 0x5A, 'mode': 'R',   'hbit':  1, 'lbit':  1, 'val': 0},
+        'PLL_BISC_CP':              {'addr': 0x5A, 'mode': 'R',   'hbit':  6, 'lbit':  2, 'val': 0},
+        'PLL_BISC_OPT_DET':         {'addr': 0x5A, 'mode': 'R',   'hbit':  7, 'lbit':  7, 'val': 0},
         'PLL_BISC_CO':              {'addr': 0x5B, 'mode': 'R',   'hbit': 15, 'lbit':  0, 'val': 0},
         'SERDES_ENABLE':            {'addr': 0x5C, 'mode': 'R/C', 'hbit':  0, 'lbit':  0, 'val': 1},
         'SERDES_AUTO_INIT':         {'addr': 0x5C, 'mode': 'R/C', 'hbit':  1, 'lbit':  1, 'val': 0},
@@ -622,6 +648,9 @@ class SerdesTool:
                 self.configure()
             self._tool.idcode()
 
+        #self._tool.wr_serdes_regfile(idx=0, addr=0, data=0, mask=0, wren=1)
+        self._tool.rd_serdes_regfile(0)
+
     def __enter__(self):
         return self
 
@@ -642,7 +671,7 @@ class SerdesTool:
         self._tool.idcode()
 
     def wr_cfg(self, bitfile):
-        self._tool.wr_cfg(bitfile)
+        self._tool.wr_cfg(bitfile, args.idx)
 
     def gen_module_vlog(self, filename):
         print(f'Generate verilog template: {filename}')
