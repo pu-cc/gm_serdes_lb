@@ -4,17 +4,25 @@ module serdes_lb (
     input trx_rstn_i,
     input ref_clk,
 
+    input RX_SLIDE_I,
+    input RX_BUF_RESET_I,
     input RX_PRBS_CNT_RESET_I,
     input TX_PRBS_FORCE_ERR_I,
+    input RX_POLARITY_I,
 
-    output [19:0] RX_DATA_O,
+    output [15:0] RX_DATA_O,
+    output [1:0] RX_DISP_ERR_O,
+    output [1:0] RX_CHAR_IS_K_O,
+
     output PLL_CLK_O,
     output RX_CLK_O,
 
     output RX_RESET_DONE_O_N, TX_RESET_DONE_O_N,
     output TX_DETECT_RX_PRESENT_O_N, TX_DETECT_RX_DONE_O_N,
-    output TX_BUF_ERR_O_N, RX_BUF_ERR_O_N,
-    output RX_BYTE_IS_ALIGNED_O_N, RX_BYTE_REALIGN_O_N
+    output TX_BUF_ERR_O_N,
+    output RX_BUF_ERR_O_N,
+    output RX_BYTE_IS_ALIGNED_O_N,
+    output RX_BYTE_REALIGN_O_N
 );
 
     // reset
@@ -44,18 +52,17 @@ module serdes_lb (
 
     wire TX_BUF_ERR_O;
     wire RX_BUF_ERR_O;
-    assign TX_BUF_ERR_O_N  = ~TX_BUF_ERR_O;
-    assign RX_BUF_ERR_O_N  = ~RX_BUF_ERR_O;
+    assign TX_BUF_ERR_O_N = ~TX_BUF_ERR_O;
+    assign RX_BUF_ERR_O_N = ~RX_BUF_ERR_O;
 
     wire RX_BYTE_IS_ALIGNED_O;
     wire RX_BYTE_REALIGN_O;
-    assign RX_BYTE_IS_ALIGNED_O_N  = ~RX_BYTE_IS_ALIGNED_O;
-    assign RX_BYTE_REALIGN_O_N  = ~RX_BYTE_REALIGN_O;
+    assign RX_BYTE_IS_ALIGNED_O_N = ~RX_BYTE_IS_ALIGNED_O;
+    assign RX_BYTE_REALIGN_O_N = ~RX_BYTE_REALIGN_O;
 
-    wire [19:0] RX_DATA_O;
+    wire [15:0] RX_DATA_O;
 
     wire RX_EI_EN_O, REGFILE_RDY_O, CLK_CORE_RX_O;
-    wire [7:0]  RX_CHAR_IS_K_O, RX_CHAR_IS_COMMA_O, RX_NOT_IN_TABLE_O;
     wire [15:0] REGFILE_DO_O;
 
     // 8b/10b control bytes
@@ -79,10 +86,10 @@ module serdes_lb (
     parameter N3 = 3; // 3/4/5
     parameter OUTDIV = 4; // 1/2/4
 
-    parameter DATAPATH = 80; // 80, 40, 20
+    parameter DATAPATH = 20; // 80, 40, 20
 
-    parameter ENABLE_8B10B = 1'b1;
-    parameter ENABLE_COMMADETECT = 1'b1 & ENABLE_8B10B;
+    parameter ENABLE_8B10B = 1'b0;
+    parameter ENABLE_COMMADETECT = 1'b1;
 
     parameter [2:0] PRBS_SEL =
         3'b000; // PRBS checker disabled
@@ -131,6 +138,19 @@ module serdes_lb (
     parameter [14:0] RX_EYE_MEAS_CFG = {11'b0, 3'b0};
 
     parameter K_POS = 0;
+
+    // NOTE: SERDES expects 80 TX bits
+    //always @(posedge tx_usrclk)
+    //begin
+    //    if (DATAPATH == 20) begin
+    //        tx_data_in <= {tx_txdata, tx_txdata, tx_txdata, tx_txdata};
+    //    end
+    //    else if (DATAPATH == 40) begin
+    //        tx_data_in <= {tx_txdata, tx_txdata};
+    //    end else begin
+    //        tx_data_in <= tx_txdata;
+    //    end
+    //end
 
     function [63:0] calcTxData(input integer pos, input comma);
     begin
@@ -223,7 +243,7 @@ CC_SERDES #(
     .RX_PCOMMA_ALIGN(1'h0),
     .RX_ALIGN_COMMA_WORD(2'h3), // 11: 32 bit, 01: 16 bit, 00: 8 bit
     .RX_ALIGN_COMMA_ENABLE(10'h3FF),
-    .RX_SLIDE_MODE(2'b00), // !!!
+    .RX_SLIDE_MODE(2'b01), // 2'b10: slide byte, 2'b01: slide bit, requires RX_COMMA_DETECT_EN=!
     .RX_COMMA_DETECT_EN_OVR(1'h0),
     .RX_COMMA_DETECT_EN(1'h0),
     .RX_SLIDE(2'h0),
@@ -264,9 +284,7 @@ CC_SERDES #(
     .RX_PCS_RESET(1'h0),
     .RX_BUF_RESET_OVR(1'h0),
     .RX_BUF_RESET(1'h0),
-    .RX_POLARITY_OVR(1'h0),
     .RX_POLARITY(1'h0),
-    .RX_8B10B_EN_OVR(1'h0),
     .RX_8B10B_EN(1'h0),
     .RX_8B10B_BYPASS(8'h0),
     .RX_BYTE_REALIGN(1'h0),
@@ -362,11 +380,11 @@ CC_SERDES #(
     .PLL_FILTER_SHIFT(2'h2),
     .PLL_SAR_LIMIT(3'h2),
     .PLL_FT(11'h200),
-    .PLL_OPEN_LOOP(1'h0),
-    .PLL_SCAP_AUTO_CAL(1'h1),
+    .PLL_OPEN_LOOP(1'h1),
+    .PLL_SCAP_AUTO_CAL(1'h0),
     .PLL_BISC_MODE(3'h5), // MODE B, enable
     .PLL_BISC_TIMER_MAX(4'hC),
-    .PLL_BISC_OPT_DET_IND(1'h0),
+    .PLL_BISC_OPT_DET_IND(1'h1),
     .PLL_BISC_PFD_SEL(1'h0),
     .PLL_BISC_DLY_DIR(1'h0),
     .PLL_BISC_COR_DLY(3'h1),
@@ -379,7 +397,7 @@ CC_SERDES #(
     .PLL_BISC_DLY_PFD_MON_DIV(5'h2),
     .SERDES_ENABLE(1'h1),
     .SERDES_AUTO_INIT(1'h0),
-    .SERDES_TESTMODE(1'h1)
+    .SERDES_TESTMODE(1'h0)
 ) i_cc_serdes (
     // ADPLL
     .RX_CLK_O(RX_CLK_O), // CDR CLK
@@ -387,13 +405,13 @@ CC_SERDES #(
     // LOPPBACK
     .LOOPBACK_I(LOOPBACK_SEL),
     // RESET
-    .TX_RESET_I(trx_rst_i),
-    .RX_RESET_I(trx_rst_i),
+    .TX_RESET_I(1'b0),
+    .RX_RESET_I(1'b0),
     .RX_PMA_RESET_I(1'b0),
     .RX_EQA_RESET_I(1'b0),
     .RX_CDR_RESET_I(1'b0),
     .RX_PCS_RESET_I(1'b0),
-    .RX_BUF_RESET_I(1'b0),
+    .RX_BUF_RESET_I(RX_BUF_RESET_I),
     .TX_PCS_RESET_I(1'b0),
     .TX_PMA_RESET_I(1'b0),
     .PLL_RESET_I(trx_rst_i),
@@ -419,7 +437,7 @@ CC_SERDES #(
     // RX
     .RX_CLK_I(PLL_CLK_O),
     .RX_POWER_DOWN_N_I(1'h1),
-    .RX_POLARITY_I(1'h0),
+    .RX_POLARITY_I(RX_POLARITY_I),
     .RX_PRBS_SEL_I(PRBS_SEL),
     .RX_PRBS_CNT_RESET_I(RX_PRBS_CNT_RESET_I),
     .RX_PRBS_ERR_O(RX_PRBS_ERR_O),
@@ -427,27 +445,36 @@ CC_SERDES #(
     .RX_8B10B_BYPASS_I(8'h0),
     .RX_EN_EI_DETECTOR_I(1'h0),
     .RX_COMMA_DETECT_EN_I(ENABLE_COMMADETECT),
-    .RX_SLIDE_I(1'h0),
+    .RX_SLIDE_I(RX_SLIDE_I), // requires RX_COMMA_DETECT_EN=1
     .RX_MCOMMA_ALIGN_I(ENABLE_COMMADETECT),
     .RX_PCOMMA_ALIGN_I(ENABLE_COMMADETECT),
     .RX_DATA_O(RX_DATA_O),
     .RX_NOT_IN_TABLE_O(),
     .RX_CHAR_IS_COMMA_O(),
-    .RX_CHAR_IS_K_O(),
-    .RX_DISP_ERR_O(),
+    .RX_CHAR_IS_K_O(RX_CHAR_IS_K_O),
+    .RX_DISP_ERR_O(RX_DISP_ERR_O),
     .RX_BUF_ERR_O(RX_BUF_ERR_O),
     .RX_BYTE_IS_ALIGNED_O(RX_BYTE_IS_ALIGNED_O),
     .RX_BYTE_REALIGN_O(RX_BYTE_REALIGN_O),
     .RX_EI_EN_O(),
     // REGFILE
-    .REGFILE_CLK_I(1'h0),
-    .REGFILE_WE_I(1'h0),
-    .REGFILE_EN_I(1'h0),
-    .REGFILE_ADDR_I(8'h0),
-    .REGFILE_DI_I(16'h0),
-    .REGFILE_MASK_I(16'h0),
-    .REGFILE_DO_O(REGFILE_DO_O),
-    .REGFILE_RDY_O(REGFILE_RDY_O)
+    .REGFILE_CLK_I(regfile_clk),
+    .REGFILE_WE_I(regfile_we),
+    .REGFILE_EN_I(regfile_en),
+    .REGFILE_ADDR_I(regfile_addr),
+    .REGFILE_DI_I(regfile_di),
+    .REGFILE_MASK_I(regfile_mask),
+    .REGFILE_DO_O(regfile_do),
+    .REGFILE_RDY_O(regfile_rdy)
 );
+
+wire regfile_clk = 1'b0;
+wire regfile_we = 1'b0;
+wire regfile_en = 1'b0;
+wire  [7:0] regfile_addr = '0;
+wire [15:0] regfile_mask = '0;
+wire [15:0] regfile_di = '0;
+wire [15:0] regfile_do;
+wire regfile_rdy;
 
 endmodule
