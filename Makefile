@@ -1,12 +1,14 @@
 ## tools
 YOSYS = yosys
-PR = p_r
 NEXTPNR = nextpnr-himbaechel
 PACK = gmpack
 OFL = openFPGALoader
 
+DEVICE = CCGM1A1
+
 TOP = serdes_lb
 NEXTPNRFLAGS =
+#-o force_die=1A
 OFLFLAGS = --index-chain 0
 PACKFLAGS =
 
@@ -18,7 +20,7 @@ net/$(TOP)_synth.json: $(VLOG_SRC)
 	$(YOSYS) -ql log/synth.log -p 'read_verilog -sv $^; synth_gatemate -top $(TOP) -luttree $(YSFLAGS) -vlog net/$(TOP)_synth.v -json net/$(TOP)_synth.json'
 
 $(TOP).txt: net/$(TOP)_synth.json src/$(TOP).ccf
-	$(NEXTPNR) -l log/impl.log --device CCGM1A1 --json net/$(TOP)_synth.json -o ccf=src/$(TOP).ccf $(NEXTPNRFLAGS) -o out=$(TOP).txt --router router2 --sdf=$(TOP).sdf --write $(TOP)_impl.json
+	$(NEXTPNR) -l log/impl.log --device $(DEVICE) --json net/$(TOP)_synth.json -o ccf=src/$(TOP).ccf $(NEXTPNRFLAGS) -o out=$(TOP).txt --router router2 --sdf=$(TOP).sdf --write $(TOP)_impl.json
 	$(YOSYS) -q -p 'read_json $(TOP)_impl.json; write_verilog $(TOP)_impl.v'
 
 $(TOP).bit: $(TOP).txt
@@ -42,20 +44,4 @@ clean:
 	$(RM) net/*_synth.v
 	$(RM) work-obj*.cf
 	$(RM) *.txt
-	$(RM) *.crf
-	$(RM) *.refwire
-	$(RM) *.refparam
-	$(RM) *.refcomp
-	$(RM) *.pos
-	$(RM) *.pathes
-	$(RM) *.path_struc
-	$(RM) *.net
-	$(RM) *.id
-	$(RM) *.prn
-	$(RM) *_00.v
-	$(RM) *.used
 	$(RM) *.sdf
-	$(RM) *.place
-	$(RM) *.pin
-	$(RM) *.cfg*
-	$(RM) *.cdf

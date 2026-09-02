@@ -2,7 +2,6 @@
 
 module serdes_lb (
     input trx_rstn_i,
-    input ref_clk,
 
     input RX_SLIDE_I,
     input RX_BUF_RESET_I,
@@ -24,17 +23,7 @@ module serdes_lb (
     output RX_BYTE_IS_ALIGNED_O_N,
     output RX_BYTE_REALIGN_O_N
 );
-
-    // reset
-    reg [8:0] rst_cnt = 0;
-    wire rstn = &rst_cnt;
-    wire rst = !rstn;
-
-    always @(posedge ref_clk) begin
-        rst_cnt <= rst_cnt + !rstn;
-    end
-
-    wire trx_rst_i = ~trx_rstn_i | rst;
+    wire trx_rst_i = ~trx_rstn_i;
 
     wire CLK_CORE_PLL_O_N;
 
@@ -65,6 +54,10 @@ module serdes_lb (
     wire RX_EI_EN_O, REGFILE_RDY_O, CLK_CORE_RX_O;
     wire [15:0] REGFILE_DO_O;
 
+    parameter [4:0] RESET_TIME = 5'h3;
+    parameter RX_CALIB = 4'h0;
+    parameter TX_CALIB = 4'h0;
+
     // 8b/10b control bytes
     parameter [27:0] kChar =
         //{8'hxx, 10'h000, 10'h000}; // K28_5
@@ -81,12 +74,15 @@ module serdes_lb (
         //{8'hFE, 10'h11C, 10'h38C}; // K30_7
 
     // ADPLL clock settings
-    parameter N1 = 1; // 1/2
-    parameter N2 = 2; // 2/3/4/5
-    parameter N3 = 3; // 3/4/5
-    parameter OUTDIV = 4; // 1/2/4
+    parameter N1 = 2; // 1/2
+    parameter N2 = 4; // 2/3/4/5
+    parameter N3 = 4; // 3/4/5
+    parameter OUTDIV = 1; // 1/2/4
 
-    parameter DATAPATH = 20; // 80, 40, 20
+    //1551
+    //2441 6.4G
+
+    parameter DATAPATH = 80; // 80, 40, 20
 
     parameter ENABLE_8B10B = 1'b0;
     parameter ENABLE_COMMADETECT = 1'b1;
@@ -139,18 +135,53 @@ module serdes_lb (
 
     parameter K_POS = 0;
 
-    // NOTE: SERDES expects 80 TX bits
-    //always @(posedge tx_usrclk)
-    //begin
-    //    if (DATAPATH == 20) begin
-    //        tx_data_in <= {tx_txdata, tx_txdata, tx_txdata, tx_txdata};
-    //    end
-    //    else if (DATAPATH == 40) begin
-    //        tx_data_in <= {tx_txdata, tx_txdata};
-    //    end else begin
-    //        tx_data_in <= tx_txdata;
-    //    end
-    //end
+    wire [DATAPATH-1:0] tx_txdata;
+
+    wire [63:0] tx_data = {
+        tx_data_in[77:70],
+        tx_data_in[67:60],
+        tx_data_in[57:50],
+        tx_data_in[47:40],
+        tx_data_in[37:30],
+        tx_data_in[27:20],
+        tx_data_in[17:10],
+        tx_data_in[7:0]
+    };
+    wire [7:0] tx_char_dispmode = {
+        tx_data_in[79],
+        tx_data_in[69],
+        tx_data_in[59],
+        tx_data_in[49],
+        tx_data_in[39],
+        tx_data_in[29],
+        tx_data_in[19],
+        tx_data_in[9]
+    };
+    wire [7:0] tx_char_dispval = {
+        tx_data_in[78],
+        tx_data_in[68],
+        tx_data_in[58],
+        tx_data_in[48],
+        tx_data_in[38],
+        tx_data_in[28],
+        tx_data_in[18],
+        tx_data_in[8]
+    };
+
+    reg [79:0] tx_data_in;
+
+    always @(*)
+    begin
+        // SERDES expects 80 TX bits
+        if (DATAPATH == 20) begin
+            tx_data_in <= {tx_txdata, tx_txdata, tx_txdata, tx_txdata};
+        end
+        else if (DATAPATH == 40) begin
+            tx_data_in <= {tx_txdata, tx_txdata};
+        end else begin
+            tx_data_in <= tx_txdata;
+        end
+    end
 
     function [63:0] calcTxData(input integer pos, input comma);
     begin
@@ -195,67 +226,72 @@ module serdes_lb (
     end
     endfunction
 
+    parameter [4:0] TX_BRANCH_EN_PRE  = 5'hC;
+    parameter [5:0] TX_BRANCH_EN_MAIN = 6'h3F;
+    parameter [4:0] TX_BRANCH_EN_POST = 5'hC;
+    parameter [6:0] TX_DC_ENABLE = (TX_BRANCH_EN_PRE+TX_BRANCH_EN_MAIN+TX_BRANCH_EN_POST) / 2;
+
 
 // CC_SERDES instance generator
 // generated: 2024-01-31 13:57:01
 
 CC_SERDES #(
-    .RX_BUF_RESET_TIME(5'h3),
-    .RX_PCS_RESET_TIME(5'h3),
-    .RX_RESET_TIMER_PRESC(5'h0),
+    .RX_BUF_RESET_TIME(RESET_TIME),
+    .RX_PCS_RESET_TIME(RESET_TIME),
+    .RX_RESET_TIMER_PRESC(5'h4),
     .RX_RESET_DONE_GATE(1'h0),
-    .RX_CDR_RESET_TIME(5'h3),
-    .RX_EQA_RESET_TIME(5'h3),
-    .RX_PMA_RESET_TIME(5'h3),
+    .RX_CDR_RESET_TIME(RESET_TIME),
+    .RX_EQA_RESET_TIME(RESET_TIME),
+    .RX_PMA_RESET_TIME(RESET_TIME),
     .RX_WAIT_CDR_LOCK(1'b0), // turn off if loopback enabled
     .RX_CALIB_EN(1'h1),
     .RX_CALIB_OVR(1'h0),
     .RX_CALIB_VAL(4'h0),
-    .RX_RTERM_VCMSEL(3'h4),
+    .RX_RTERM_VCMSEL(3'h3), // 3: ~800mV @ VDDIO=1.1V
     .RX_RTERM_PD(1'h0),
     .RX_EQA_CKP_LF(8'hA3),
     .RX_EQA_CKP_HF(8'hA3),
     .RX_EQA_CKP_OFFSET(8'h01),
     .RX_EN_EQA(1'h1),
-    .RX_EQA_LOCK_CFG(4'h0),
+    .RX_EQA_LOCK_CFG(4'hC),
     .RX_TH_MON1(5'h8),
     .RX_EN_EQA_EXT_VALUE(4'h0),
     .RX_TH_MON2(5'h8),
     .RX_TAPW(5'h8),
     .RX_AFE_OFFSET(5'h8),
     .RX_EQA_CONFIG(16'h1C0),
-    .RX_AFE_PEAK(5'hF),
-    .RX_AFE_GAIN(4'h8),
-    .RX_AFE_VCMSEL(3'h4),
-    .RX_CDR_CKP(8'hF8),
-    .RX_CDR_CKI(8'h00),
+    .RX_AFE_PEAK(5'h18),
+    .RX_AFE_GAIN(4'h0),
+    .RX_AFE_VCMSEL(3'h3),
+    .RX_CDR_CKP(8'h3E),
+    .RX_CDR_CKI(8'h0),
     .RX_CDR_LOCK_CFG(8'hD5),
     .RX_CDR_TRANS_TH(7'h8),
     .RX_CDR_FREQ_ACC(15'h0),
     .RX_CDR_PHASE_ACC(16'h0000),
     .RX_CDR_SET_ACC_CONFIG(2'h0),
     .RX_CDR_FORCE_LOCK(1'h0),
+    .RX_MON_PH_OFFSET(6'h00),
     .RX_ALIGN_MCOMMA_VALUE(kChar[19:10]),
-    .RX_MCOMMA_ALIGN_OVR(1'h0),
-    .RX_MCOMMA_ALIGN(1'h0),
+    .RX_MCOMMA_ALIGN_OVR(1'h1),
+    .RX_MCOMMA_ALIGN(1'h1),
     .RX_ALIGN_PCOMMA_VALUE(kChar[9:0]),
-    .RX_PCOMMA_ALIGN_OVR(1'h0),
-    .RX_PCOMMA_ALIGN(1'h0),
+    .RX_PCOMMA_ALIGN_OVR(1'h1),
+    .RX_PCOMMA_ALIGN(1'h1),
     .RX_ALIGN_COMMA_WORD(2'h3), // 11: 32 bit, 01: 16 bit, 00: 8 bit
     .RX_ALIGN_COMMA_ENABLE(10'h3FF),
-    .RX_SLIDE_MODE(2'b01), // 2'b10: slide byte, 2'b01: slide bit, requires RX_COMMA_DETECT_EN=!
-    .RX_COMMA_DETECT_EN_OVR(1'h0),
-    .RX_COMMA_DETECT_EN(1'h0),
-    .RX_SLIDE(2'h0),
+    .RX_SLIDE(2'b01), // RX_SLIDE=0, RX_SLIDE_OVR=1
+    .RX_SLIDE_MODE(2'b01), // 2'b10: slide byte, 2'b01: slide bit
+    .RX_COMMA_DETECT_EN_OVR(1'h1), // required for RX_SLIDE
+    .RX_COMMA_DETECT_EN(1'h1),
     .RX_EYE_MEAS_EN(1'h0),
     .RX_EYE_MEAS_CFG(RX_EYE_MEAS_CFG),
-    .RX_MON_PH_OFFSET(6'h0),
     .RX_EI_BIAS(4'h4),
     .RX_EI_BW_SEL(4'h4),
     .RX_EN_EI_DETECTOR_OVR(1'h0),
     .RX_EN_EI_DETECTOR(1'h0),
     .RX_DATA_SEL(1'h0),
-    .RX_BUF_BYPASS(1'h0),
+    .RX_BUF_BYPASS(1'h0), // RX elastic buffer can be bypassed to reduce latency when the RX recovered clock is used to source RXUSRCLK
     .RX_CLKCOR_USE(1'h0),
     .RX_CLKCOR_MIN_LAT(6'h20),
     .RX_CLKCOR_MAX_LAT(6'h27),
@@ -272,31 +308,33 @@ CC_SERDES #(
     .RX_PRBS_CNT_RESET(1'h0),
     .RX_POWER_DOWN_OVR(1'h0),
     .RX_POWER_DOWN_N(1'h1),
-    .RX_RESET_OVR(1'h0),
+    .RX_RESET_OVR(1'h1), // requires PMA, EQA, CDR, PCS and BUF RESET_OVR
     .RX_RESET(1'h0),
-    .RX_PMA_RESET_OVR(1'h0),
+    .RX_PMA_RESET_OVR(1'h1),
     .RX_PMA_RESET(1'h0),
-    .RX_EQA_RESET_OVR(1'h0),
+    .RX_EQA_RESET_OVR(1'h1),
     .RX_EQA_RESET(1'h0),
-    .RX_CDR_RESET_OVR(1'h0),
+    .RX_CDR_RESET_OVR(1'h1),
     .RX_CDR_RESET(1'h0),
-    .RX_PCS_RESET_OVR(1'h0),
+    .RX_PCS_RESET_OVR(1'h1),
     .RX_PCS_RESET(1'h0),
-    .RX_BUF_RESET_OVR(1'h0),
+    .RX_BUF_RESET_OVR(1'h1),
     .RX_BUF_RESET(1'h0),
+    .RX_POLARITY_OVR(1'h0),
     .RX_POLARITY(1'h0),
+    .RX_8B10B_EN_OVR(1'h0),
     .RX_8B10B_EN(1'h0),
     .RX_8B10B_BYPASS(8'h0),
     .RX_BYTE_REALIGN(1'h0),
-    .TX_SEL_PRE(5'h0),
-    .TX_SEL_POST(5'h0),
-    .TX_AMP(5'd30),
-    .TX_BRANCH_EN_PRE(5'hF),
-    .TX_BRANCH_EN_MAIN(6'h3F),
-    .TX_BRANCH_EN_POST(5'hF),
+    .TX_SEL_PRE(5'h5),
+    .TX_SEL_POST(5'h5),
+    .TX_AMP(5'h1F),
+    .TX_BRANCH_EN_PRE(TX_BRANCH_EN_PRE),
+    .TX_BRANCH_EN_MAIN(TX_BRANCH_EN_MAIN),
+    .TX_BRANCH_EN_POST(TX_BRANCH_EN_POST),
     .TX_TAIL_CASCODE(3'h4),
-    .TX_DC_ENABLE(7'h3F),
-    .TX_DC_OFFSET(5'h8), // ? note: set to 8
+    .TX_DC_ENABLE(TX_DC_ENABLE),
+    .TX_DC_OFFSET(5'h8),
     .TX_CM_RAISE(5'h0),
     .TX_CM_THRESHOLD_0(5'hE),
     .TX_CM_THRESHOLD_1(5'h10),
@@ -324,19 +362,19 @@ CC_SERDES #(
     .TX_CM_RAISE_RXDET(5'h0),
     .TX_CM_THRESHOLD_0_RXDET(5'hE),
     .TX_CM_THRESHOLD_1_RXDET(5'h10),
-    .TX_CALIB_EN(1'h0),
-    .TX_CALIB_OVR(1'h0),
-    .TX_CALIB_VAL(4'h0),
+    .TX_CALIB_EN(1'h1),
+    .TX_CALIB_OVR(TX_CALIB != 4'h0),
+    .TX_CALIB_VAL(TX_CALIB),
     .TX_CM_REG_KI(8'h80),
     .TX_CM_SAR_EN(1'h0),
     .TX_CM_REG_EN(1'h1),
-    .TX_PMA_RESET_TIME(5'h3),
-    .TX_PCS_RESET_TIME(5'h3),
+    .TX_PMA_RESET_TIME(RESET_TIME),
+    .TX_PCS_RESET_TIME(RESET_TIME),
     .TX_PCS_RESET_OVR(1'h0),
     .TX_PCS_RESET(1'h0),
     .TX_PMA_RESET_OVR(1'h0),
     .TX_PMA_RESET(1'h0),
-    .TX_RESET_OVR(1'h0),
+    .TX_RESET_OVR(1'h1),
     .TX_RESET(1'h0),
     .TX_PMA_LOOPBACK(TX_PMA_LOOPBACK),
     .TX_PCS_LOOPBACK(1'h0),
@@ -380,11 +418,11 @@ CC_SERDES #(
     .PLL_FILTER_SHIFT(2'h2),
     .PLL_SAR_LIMIT(3'h2),
     .PLL_FT(11'h200),
-    .PLL_OPEN_LOOP(1'h1),
-    .PLL_SCAP_AUTO_CAL(1'h0),
+    .PLL_OPEN_LOOP(1'h0),
+    .PLL_SCAP_AUTO_CAL(1'h1),
     .PLL_BISC_MODE(3'h5), // MODE B, enable
     .PLL_BISC_TIMER_MAX(4'hC),
-    .PLL_BISC_OPT_DET_IND(1'h1),
+    .PLL_BISC_OPT_DET_IND(1'h0),
     .PLL_BISC_PFD_SEL(1'h0),
     .PLL_BISC_DLY_DIR(1'h0),
     .PLL_BISC_COR_DLY(3'h1),
@@ -397,7 +435,7 @@ CC_SERDES #(
     .PLL_BISC_DLY_PFD_MON_DIV(5'h2),
     .SERDES_ENABLE(1'h1),
     .SERDES_AUTO_INIT(1'h0),
-    .SERDES_TESTMODE(1'h0)
+    .SERDES_TESTMODE(1'h1)
 ) i_cc_serdes (
     // ADPLL
     .RX_CLK_O(RX_CLK_O), // CDR CLK
@@ -435,7 +473,7 @@ CC_SERDES #(
     .TX_DETECT_RX_PRESENT_O(TX_DETECT_RX_PRESENT_O),
     .TX_BUF_ERR_O(TX_BUF_ERR_O),
     // RX
-    .RX_CLK_I(PLL_CLK_O),
+    .RX_CLK_I(RX_CLK_O),
     .RX_POWER_DOWN_N_I(1'h1),
     .RX_POLARITY_I(RX_POLARITY_I),
     .RX_PRBS_SEL_I(PRBS_SEL),
