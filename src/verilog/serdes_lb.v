@@ -74,10 +74,10 @@ module serdes_lb (
         //{8'hFE, 10'h11C, 10'h38C}; // K30_7
 
     // ADPLL clock settings
-    parameter N1 = 2; // 1/2
-    parameter N2 = 4; // 2/3/4/5
-    parameter N3 = 4; // 3/4/5
-    parameter OUTDIV = 1; // 1/2/4
+    parameter N1 = 1; // 1/2
+    parameter N2 = 5; // 2/3/4/5
+    parameter N3 = 5; // 3/4/5
+    parameter OUTDIV = 2; // 1/2/4
 
     //1551
     //2441 6.4G
@@ -135,7 +135,7 @@ module serdes_lb (
 
     parameter K_POS = 0;
 
-    wire [DATAPATH-1:0] tx_txdata;
+    wire [DATAPATH-1:0] tx_txdata = 'h0;
 
     wire [63:0] tx_data = {
         tx_data_in[77:70],
@@ -187,13 +187,14 @@ module serdes_lb (
     begin
         if (comma == 1'b1) begin
             calcTxData =
-                (pos == 0) ? 64'h4A4A4AFF_4A4A4ABC :
-                (pos == 1) ? 64'h4A4A4A4A_4A4ABC4A :
-                (pos == 2) ? 64'h4A4A4A4A_4ABC4A4A :
-                (pos == 3) ? 64'hA44A4A4A_BC4A4A4A :
-                (pos == 4) ? 64'h4A4A4ABC_4A4A4A4A :
-                (pos == 5) ? 64'h4A4ABC4A_4A4A4A4A :
-                (pos == 6) ? 64'h4ABC4A4A_4A4A4A4A : 64'hBC4A4A4A_4A4A4A4A;
+                (pos == 0) ? {56'h4A4A4AFF4A4A4A, kChar[27:20]} :
+                (pos == 1) ? {48'h4A4A4A4A4A4A, kChar[27:20],  8'h4A} :
+                (pos == 2) ? {40'h4A4A4A4A4A, kChar[27:20], 16'h4A4A} :
+                (pos == 3) ? {32'hA44A4A4A, kChar[27:20], 24'h4A4A4A} :
+                (pos == 4) ? {24'h4A4A4A, kChar[27:20], 32'h4A4A4A4A} :
+                (pos == 5) ? {16'h4A4A, kChar[27:20], 40'h4A4A4A4A4A} :
+                (pos == 6) ? { 8'h4A, kChar[27:20], 48'h4A4A4A4A4A4A} :
+                             {kChar[27:20], 56'h4A4A4A_4A4A4A4A};
         end
         else begin
             calcTxData =
@@ -203,7 +204,8 @@ module serdes_lb (
                 (pos == 3) ? 64'h05040302_01080706 :
                 (pos == 4) ? 64'h04030201_08070605 :
                 (pos == 5) ? 64'h03020108_07060504 :
-                (pos == 6) ? 64'h02010807_06050403 : 64'h01080706_05040302;
+                (pos == 6) ? 64'h02010807_06050403 :
+                             64'h01080706_05040302;
         end
     end
     endfunction
@@ -280,8 +282,8 @@ CC_SERDES #(
     .RX_PCOMMA_ALIGN(1'h1),
     .RX_ALIGN_COMMA_WORD(2'h3), // 11: 32 bit, 01: 16 bit, 00: 8 bit
     .RX_ALIGN_COMMA_ENABLE(10'h3FF),
-    .RX_SLIDE(2'b01), // RX_SLIDE=0, RX_SLIDE_OVR=1
-    .RX_SLIDE_MODE(2'b01), // 2'b10: slide byte, 2'b01: slide bit
+    .RX_SLIDE(2'b01), // {RX_SLIDE=0, RX_SLIDE_OVR=1}
+    .RX_SLIDE_MODE(2'b00), // 2'b10: slide byte, 2'b01: slide bit, 2'b00: required for auto comma align
     .RX_COMMA_DETECT_EN_OVR(1'h1), // required for RX_SLIDE
     .RX_COMMA_DETECT_EN(1'h1),
     .RX_EYE_MEAS_EN(1'h0),
@@ -458,8 +460,8 @@ CC_SERDES #(
     // TX
     .TX_CLK_I(PLL_CLK_O),
     .TX_DATA_I(calcTxData(K_POS, ENABLE_COMMADETECT)),
-    .TX_CHAR_DISPVAL_I(8'h0),
-    .TX_CHAR_DISPMODE_I(8'h0),
+    .TX_CHAR_DISPVAL_I(tx_char_dispval),
+    .TX_CHAR_DISPMODE_I(tx_char_dispmode),
     .TX_POWER_DOWN_N_I(1'h1),
     .TX_POLARITY_I(1'h0),
     .TX_PRBS_SEL_I(PRBS_SEL),
