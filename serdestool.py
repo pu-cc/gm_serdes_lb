@@ -16,7 +16,7 @@
 #
 #  Visit https://colognechip.com for more information.
 #
-#  Copyright (C) 2022 - 2025 Cologne Chip AG <support@colognechip.com>
+#  Copyright (C) 2022 - 2026 Cologne Chip AG <support@colognechip.com>
 #  Authors: Patrick Urban
 #
 
@@ -30,13 +30,15 @@ import argparse
 import datetime
 import threading
 
-from time import sleep
+from time import sleep, time
 from itertools import chain
 
 from pyftdi.ftdi import Ftdi
-from pyftdi.jtag import JtagEngine
+from pyftdi.jtag import JtagEngine, JtagController, JtagStateMachine
 from pyftdi.usbtools import UsbTools
 from pyftdi.bits import BitSequence
+
+from eyetools import EyeData, EyePlot
 
 Boards_e = ['auto', 'pgm', 'evb']
 ArgEpilog = 'example usage: python3 serdestool.py'
@@ -106,6 +108,18 @@ def ReadCfgFile(filename) -> bytes:
     f.close()
     return cfg_bin
 
+def ph_code(value):
+    """Signed phase offset (-32..+31) -> 6-bit register code."""
+    if value not in range(-32, 32):
+        raise ValueError('phase offset out of range (-32..+31)')
+    return value & 0x3F
+
+
+def ph_value(code):
+    """6-bit register code -> signed phase offset."""
+    code &= 0x3F
+    return code - 64 if code & 0x20 else code
+
 class ColorFormatter:
     pos_cond = ["DONE", "PRESENT", "LOCKED", "IS_ALIGNED", "EN_ADPLL_CTRL", "CONFIG_SEL", "SERDES_ENABLE"]
     neg_cond = ["ERR", "DOWN", "TESTMODE"]
@@ -126,6 +140,13 @@ class ColorFormatter:
         elif any(cond in key for cond in ColorFormatter.ovr_cond) and value > 0:
             return 4  # Blue for "OVR" values
         return 0  # Default
+
+class PatchedJtagController(JtagController):
+    def configure(self, url: str) -> None:
+        self._ftdi.open_mpsse_from_url(
+            url, direction=self.direction, frequency=self._frequency)
+        self._ftdi.write_data(bytearray((Ftdi.SET_BITS_LOW, 0x00, 0x0B)))
+        self._ftdi.write_data(bytearray((Ftdi.SET_BITS_HIGH, 0x00, 0x01)))
 
 class JtagTool:
     CMD_JTAG_ID                = '000000' # 0x00
@@ -208,12 +229,12 @@ class JtagTool:
         cmd += BitSequence(value=mask, length=16, msb=False, msby=True)
         cmd += BitSequence(value=wren, length=1, msb=False, msby=True)
         self.write_dr(cmd, idx)
-        self._engine.go_idle()
+        #self._engine.go_idle()
 
     def rd_serdes_regfile(self, idx):
         self.write_ir(BitSequence(self.CMD_JTAG_RD_SERDES_REGFILE, msb=True), idx)
         word = self.read_dr(16, idx)
-        self._engine.go_idle()
+        #self._engine.go_idle()
         return word
 
     # Read PLLn status
@@ -295,17 +316,17 @@ class SerdesTool:
         'RX_EN_EQA':                {'addr': 0x04, 'mode': 'R/W', 'hbit':  8, 'lbit':  8, 'val': 0},
         'RX_EQA_LOCK_CFG':          {'addr': 0x04, 'mode': 'R/W', 'hbit': 12, 'lbit':  9, 'val': 0},
         'RX_EQA_LOCKED':            {'addr': 0x04, 'mode': 'R',   'hbit': 13, 'lbit': 13, 'val': 0},
-        'RX_TH_MON1':               {'addr': 0x05, 'mode': 'R/W', 'hbit':  4, 'lbit':  0, 'val': 8},
-        'RX_EN_EQA_EXT_VALUE[0]':   {'addr': 0x05, 'mode': 'R/W', 'hbit':  5, 'lbit':  5, 'val': 0},
-        'RX_TH_MON2':               {'addr': 0x05, 'mode': 'R/W', 'hbit': 10, 'lbit':  6, 'val': 8},
-        'RX_EN_EQA_EXT_VALUE[1]':   {'addr': 0x05, 'mode': 'R/W', 'hbit': 11, 'lbit': 11, 'val': 0},
-        'RX_TAPW':                  {'addr': 0x06, 'mode': 'R/W', 'hbit':  4, 'lbit':  0, 'val': 8},
-        'RX_EN_EQA_EXT_VALUE[2]':   {'addr': 0x06, 'mode': 'R/W', 'hbit':  5, 'lbit':  5, 'val': 0},
+        'RX_TH_MON1':               {'addr': 0x05, 'mode': 'R/W', 'hbit':  4, 'lbit':  0, 'val': 8, 'sign': 's'},
+        'RX_EN_EQA_EXT_VALUE[0]':   {'addr': 0x05, 'mode': 'R/W', 'hbit':  5, 'lbit':  5, 'val': 0}, # unused
+        'RX_TH_MON2':               {'addr': 0x05, 'mode': 'R/W', 'hbit': 10, 'lbit':  6, 'val': 8, 'sign': 's'},
+        'RX_EN_EQA_EXT_VALUE[1]':   {'addr': 0x05, 'mode': 'R/W', 'hbit': 11, 'lbit': 11, 'val': 0}, # unused
+        'RX_TAPW':                  {'addr': 0x06, 'mode': 'R/W', 'hbit':  4, 'lbit':  0, 'val': 8, 'sign': 's'},
+        'RX_EN_EQA_EXT_VALUE[2]':   {'addr': 0x06, 'mode': 'R/W', 'hbit':  5, 'lbit':  5, 'val': 0}, # RX_TH_MON1_OVR + RX_TAPW_OVR
         'RX_AFE_OFFSET':            {'addr': 0x06, 'mode': 'R/W', 'hbit': 10, 'lbit':  6, 'val': 8},
-        'RX_EN_EQA_EXT_VALUE[3]':   {'addr': 0x06, 'mode': 'R/W', 'hbit': 11, 'lbit': 11, 'val': 0},
-        'RX_EQA_TAPW':              {'addr': 0x07, 'mode': 'R',   'hbit':  4, 'lbit':  0, 'val': 0},
-        'RX_TH_MON':                {'addr': 0x07, 'mode': 'R',   'hbit':  9, 'lbit':  5, 'val': 0},
-        'RX_OFFSET':                {'addr': 0x07, 'mode': 'R',   'hbit': 13, 'lbit': 10, 'val': 0},
+        'RX_EN_EQA_EXT_VALUE[3]':   {'addr': 0x06, 'mode': 'R/W', 'hbit': 11, 'lbit': 11, 'val': 0}, # RX_TH_MON2_OVR + RX_AFE_OFFSET_OVR
+        'RX_EQA_TAPW':              {'addr': 0x07, 'mode': 'R',   'hbit':  4, 'lbit':  0, 'val': 0, 'sign': 's'},
+        'RX_TH_MON':                {'addr': 0x07, 'mode': 'R',   'hbit':  9, 'lbit':  5, 'val': 0, 'sign': 's'},
+        'RX_OFFSET':                {'addr': 0x07, 'mode': 'R',   'hbit': 13, 'lbit': 10, 'val': 0, 'sign': 'sm'},
         'RX_EQA_CONFIG':            {'addr': 0x08, 'mode': 'R/W', 'hbit': 15, 'lbit':  0, 'val': 0x01C0},
         'RX_AFE_PEAK':              {'addr': 0x09, 'mode': 'R/W', 'hbit':  4, 'lbit':  0, 'val': 15},
         'RX_AFE_GAIN':              {'addr': 0x09, 'mode': 'R/W', 'hbit':  8, 'lbit':  5, 'val': 8},
@@ -336,7 +357,7 @@ class SerdesTool:
         'RX_SLIDE':                 {'addr': 0x13, 'mode': 'W/C', 'hbit': 15, 'lbit': 15, 'val': 0},
         'RX_EYE_MEAS_EN':           {'addr': 0x14, 'mode': 'W/C', 'hbit':  0, 'lbit':  0, 'val': 0},
         'RX_EYE_MEAS_CFG':          {'addr': 0x14, 'mode': 'R/W', 'hbit': 15, 'lbit':  4, 'val': 0},
-        'RX_MON_PH_OFFSET':         {'addr': 0x15, 'mode': 'R/W', 'hbit':  5, 'lbit':  0, 'val': 0},
+        'RX_MON_PH_OFFSET':         {'addr': 0x15, 'mode': 'R/W', 'hbit':  5, 'lbit':  0, 'val': 0, 'sign': 's'},
         'RX_EYE_MEAS_CORRECT_11S':  {'addr': 0x16, 'mode': 'R',   'hbit': 15, 'lbit':  0, 'val': 0},
         'RX_EYE_MEAS_WRONG_11S':    {'addr': 0x17, 'mode': 'R',   'hbit': 15, 'lbit':  0, 'val': 0},
         'RX_EYE_MEAS_CORRECT_00S':  {'addr': 0x18, 'mode': 'R',   'hbit': 15, 'lbit':  0, 'val': 0},
@@ -952,11 +973,9 @@ class SerdesTool:
 
         dco = 1000.0 / SER_CLK_PERIOD_NS * n1 * n2 * n3
         freq = dco / outdiv
-        print(f'INFO:  SerDes ADPLL frequency / data rate is {freq} MHz / {freq*2} Mbit/s')
 
-        status = self.rd_regfile_pll_status()
-        if (status[0] == 1):
-            print('INFO:  Disabling SerDes ADPLL')
+        en_adpll = self.rd_field('PLL_EN_ADPLL_CTRL')
+        if en_adpll:
             self.wr_regfile(idx=args.idx, addr=0x50, data=0x0000, mask=0x0001)
 
         if outdiv == 1:
@@ -978,11 +997,9 @@ class SerdesTool:
         elif n3 == 4:
             pll_div = (pll_div & ~(0b11 << 9)) | (0b10 << 9)
 
-        print('INFO:  Writing SerDes ADPLL divider settings')
         self.wr_regfile(idx=args.idx, addr=0x51, data=pll_div, mask=0x3FC0)
 
         if (calib):
-            print('INFO:  Stopping SerDes ADPLL self-calibration')
             self.wr_regfile(idx=args.idx, addr=0x57, data=0x0004, mask=0x0007)
             self.wr_regfile(idx=args.idx, addr=0x57, data=
                 ((self.ADPLL_PFDAC_TIMER    & 0x000F) <<  3) |
@@ -1001,15 +1018,14 @@ class SerdesTool:
         self.wr_regfile(idx=args.idx, addr=0x50, data=0x0003, mask=0x0003)
 
         if (calib):
-            print('INFO:  Starting SerDes ADPLL self-calibration')
             self.wr_regfile(idx=args.idx, addr=0x57, data=0x0004, mask=0x0007)
             self.wr_regfile(idx=args.idx, addr=0x57, data=0x0005, mask=0x0007) # BISC mode B, enable
 
         timeout = 5
         while timeout > 0:
             sleep(0.5)
-            status = self.rd_regfile_pll_status()
-            if (status[0] == 0):
+            locked = self.rd_field('PLL_LOCKED')
+            if not locked:
                 timeout = timeout - 1
                 print(f'INFO:  LCK: {int(status[0]):1d} FTO: {int(status[1]):1d} FTU: {int(status[2]):1d} FT: {int(status[3:12+1]):4d} SY: {int(status[16:23+1]):3d} ST: {int(status[13:14+1]):1d}')
                 if timeout == 0:
@@ -1122,7 +1138,7 @@ class SerdesTool:
         if (int(word[6:8+1]) != i+1):
             print(f'ERROR: TX PRBS mode is invalid')
 
-    def tc_eyemeas(self):
+    def tc_eyemeas(self, window=512, repeats=1, monitor=2, sel_tap=0, phase_step=1, tapw_sweep=False, setup=True):
         print(f'INFO:  Starting SerDes eye measurement')
 
         word = self.rd_regfile(args.idx, addr=0x5C)
@@ -1178,6 +1194,11 @@ class SerdesTool:
                 word = self.rd_regfile(args.idx, addr=0x31)
                 if (int(word[5:10+1]) != 0):
                     print(f'ERROR: Invalid TX_BRANCH_EN_MAIN setting')
+
+            ## NOTE untested
+            word = self.rd_regfile(args.idx, addr=0x13)
+            if (word[11] != 0 and word[12] != 0):
+                print(f'ERROR: invalid RX_SLIDE_MODE (must be 2''b00)')
 
             self.start_serdes_pll(n1=1, n2=5, n3=5, outdiv=4, calib=True) # 1250 Mbit/s, PFDAC=on
             self.reset_serdes_trx()
@@ -1683,10 +1704,16 @@ if __name__ == '__main__':
         p.add_argument('--tcprbs', dest='tcprbs', action='store_true', help='testcase: prbs')
         p.add_argument('--tcloopback', dest='tcloopback', action='store_true', help='testcase: loopback')
         p.add_argument('--tcuipattern', dest='tcuipattern', choices=['0','2','20','40','80'], default=None, required=False, help='testcase: 2,20,40,80 UI square wave pattern')
+        p.add_argument('--tceyemeas', dest='tceyemeas', action='store_true', help='testcase: eyemeas')
 
         args = p.parse_args()
         usb  = UsbTools()
-        jtag = JtagEngine(frequency=ArgHzParse(args.freq))
+
+        # patch pyftdi's jtag engine
+        jtag = JtagEngine.__new__(JtagEngine)
+        jtag._ctrl = PatchedJtagController(False, frequency=ArgHzParse(args.freq))
+        jtag._sm = JtagStateMachine()
+        jtag._seq = bytearray()
 
         if args.listdev:
             vps_lst = list()
@@ -1716,6 +1743,8 @@ if __name__ == '__main__':
                     s.tc_loopback()
                 if args.tcuipattern is not None:
                     s.tc_uipattern(int(args.tcuipattern))
+                if args.tceyemeas:
+                    s.tc_eyemeas()
                 if args.rdregrx:
                     s.rd_regfile_rx(verbose=2)
                 if args.rdregrxdata:
