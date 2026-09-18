@@ -779,6 +779,111 @@ class SerdesTool:
         else:
             print(line)
 
+    def _fld(self, name):
+        f = self.regfile.fields
+        if name in f:
+            return [(name, f[name])]
+
+        if name.endswith(']') and '[' in name:
+            base, idx = name[:-1].split('[', 1)
+            if base in f:
+                hi, _, lo = idx.partition(':')
+                hi = int(hi)
+                lo = int(lo) if lo else hi
+                if hi < lo:
+                    hi, lo = lo, hi
+                b = f[base]
+                width = b['hbit'] - b['lbit'] + 1
+                if hi >= width:
+                    raise ValueError(f'{name}: bit {hi} is outside {base} [{width - 1}:0]')
+                sub = dict(b)
+                sub['lbit'] = b['lbit'] + lo
+                sub['hbit'] = b['lbit'] + hi
+                sub.pop('sign', None)      # a slice of a signed field is unsigned
+                return [(name, sub)]
+        grp = sorted((k for k in f if k.startswith(name + '[')), key=lambda k: int(k[len(name) + 1:-1].split(':')[-1]))
+        if not grp:
+            raise KeyError(f'unknown register field: {name}')
+        return [(k, f[k]) for k in grp]
+
+
+    def _decode(self, val, fld):
+        """Raw field bits -> signed value, honouring the 'sign' annotation."""
+        w = fld['hbit'] - fld['lbit'] + 1
+        sign = fld.get('sign')
+        if sign == 's':
+            v = val - (1 << w) if val & (1 << (w - 1)) else val
+            return -(( 1 << (w - 1)) - 1) if v == -(1 << (w - 1)) else v   # -16 -> -15
+        if sign == 'sm':                       # bit w-1 = sign, rest magnitude
+            mag = val & ((1 << (w - 1)) - 1)
+            return -mag if val & (1 << (w - 1)) else mag
+        return val
+
+
+    def _encode(self, val, fld):
+        """Signed value -> raw field bits."""
+        w = fld['hbit'] - fld['lbit'] + 1
+        if fld.get('sign') in ('s', 'sm') and val < 0:
+            val = (val & ((1 << w) - 1)) if fld['sign'] == 's' \
+                else ((1 << (w - 1)) | (-val))
+        if not 0 <= val < (1 << w):
+            raise ValueError(f"value {val} does not fit {w}-bit field")
+        return val
+
+    def rd_field(self, name, idx=None):
+        """Read one field by name.  One register access."""
+        idx = args.idx if idx is None else idx
+        parts = self._fld(name)
+        word = int(self.rd_regfile(idx, parts[0][1]['addr']))
+        out, shift = 0, 0
+        for _, fl in parts:                    # grouped fields concatenate LSB first
+            w = fl['hbit'] - fl['lbit'] + 1
+            out |= ((word >> fl['lbit']) & ((1 << w) - 1)) << shift
+            shift += w
+        return self._decode(out, parts[0][1]) if len(parts) == 1 else out
+
+
+    def rd_fields(self, names, idx=None):
+        """Read several fields with one register access per distinct address."""
+        idx = args.idx if idx is None else idx
+        want = {}
+        for n in names:
+            for _, fl in self._fld(n):
+                want.setdefault(fl['addr'], None)
+        for a in want:
+            want[a] = int(self.rd_regfile(idx, a))
+        out = {}
+        for n in names:
+            parts, v, shift = self._fld(n), 0, 0
+            for _, fl in parts:
+                w = fl['hbit'] - fl['lbit'] + 1
+                v |= ((want[fl['addr']] >> fl['lbit']) & ((1 << w) - 1)) << shift
+                shift += w
+            out[n] = self._decode(v, parts[0][1]) if len(parts) == 1 else v
+        return out
+
+    def wr_field(self, name, value, idx=None):
+        return self.wr_fields({name: value}, idx=idx)
+
+    def wr_fields(self, values, idx=None, check=True): # replaces self.wr_regfile(idx=args.idx, addr=0x2A, data=0x0210, mask=0x02F0)
+        idx = args.idx if idx is None else idx
+        merged = {}
+        for name, val in values.items():
+            parts = self._fld(name)
+            if check and parts[0][1]['mode'] == 'R':
+                raise PermissionError(f'{name} is read-only')
+            raw = self._encode(val, parts[0][1]) if len(parts) == 1 else val
+            shift = 0
+            for _, fl in parts:
+                w = fl['hbit'] - fl['lbit'] + 1
+                chunk = (raw >> shift) & ((1 << w) - 1)
+                d, m = merged.get(fl['addr'], (0, 0))
+                merged[fl['addr']] = (d | (chunk << fl['lbit']),
+                                    m | (((1 << w) - 1) << fl['lbit']))
+                shift += w
+        for a, (d, m) in merged.items():
+            self.wr_regfile(idx=idx, addr=a, data=d, mask=m)
+
     def rd_regfile(self, idx, addr) -> int:
         self._tool.wr_serdes_regfile(idx=idx, addr=addr, data=0, mask=0, wren=0)
         return self._tool.rd_serdes_regfile(idx)
@@ -884,6 +989,45 @@ class SerdesTool:
 
     def rd_regfile_pll_bisc_status(self):
         return self.rd_regfile(args.idx, addr=0x5A) + self.rd_regfile(args.idx, addr=0x5B)
+
+    #   f_dco  = f_ref * N1 * N2 * N3
+    #   f_pll  = f_dco / OUTDIV
+    #   rate   = f_pll * 2          (the serialiser clocks on both edges)
+    _PLL_N_DIV = {0b00: 3, 0b01: 2, 0b10: 4, 0b11: 5}
+    _PLL_OUT_DIV = {0b00: 1, 0b01: 2, 0b11: 4}      # 0b10 is not generated
+
+    def pll_dividers(self):
+        """Read back (n1, n2, n3, outdiv) from the register file."""
+        f = self.rd_fields(['PLL_MAIN_DIVSEL', 'PLL_OUT_DIVSEL'])
+        main = f['PLL_MAIN_DIVSEL']
+        n2 = self._PLL_N_DIV[main & 0b11]
+        n1 = 2 if (main >> 2) & 1 else 1
+        n3 = self._PLL_N_DIV[(main >> 3) & 0b11]
+        if n3 < 3:
+            raise ValueError(f'PLL_MAIN_DIVSEL=0x{main:02X} decodes to N3={n3}, '
+                            f'which is below the allowed range 3..5')
+        outdiv = self._PLL_OUT_DIV.get(f['PLL_OUT_DIVSEL'])
+        if outdiv is None:
+            raise ValueError(f'PLL_OUT_DIVSEL={f["PLL_OUT_DIVSEL"]} is reserved')
+        return n1, n2, n3, outdiv
+
+    def serdes_line_rate(self, ref_mhz=None, verbose=False):
+        """Line rate in bit/s, decoded from the ADPLL dividers.
+
+        ref_mhz defaults to the reference implied by SER_CLK_PERIOD_NS.
+        """
+        ref = ref_mhz if ref_mhz is not None else 1000.0 / SER_CLK_PERIOD_NS
+        n1, n2, n3, outdiv = self.pll_dividers()
+        f_dco = ref * n1 * n2 * n3
+        f_pll = f_dco / outdiv
+        rate = f_pll * 2e6
+        if verbose:
+            locked = self.rd_field('PLL_LOCKED')
+            print(f'INFO:  ADPLL N1={n1} N2={n2} N3={n3} OUTDIV={outdiv}  '
+                f'REF {ref_mhz:.0f} MHz  '
+                f'DCO {f_dco:.0f} MHz  PLL {f_pll:.0f} MHz  '
+                f'rate {rate / 1e6:.0f} Mbit/s  locked={int(locked)}')
+        return rate
 
     def reset_serdes_tx(self):
         print('INFO:  Resetting SerDes TX')
